@@ -1,0 +1,30 @@
+# Copy this file to  evaluation/corpus/cases/<case_id>.yaml  and edit it.
+# Check your work with:  python -m extractor eval
+case_id: loan_001                  # unique across the corpus
+description: Scanned loan agreement with one amendment.
+documents:                         # files inside evaluation/corpus/documents/
+  - loan_001.pdf
+spec: specs/loan.yaml              # path relative to evaluation/corpus/
+tags: [scan, amendment]            # free labels, e.g. scan, long, amendment, contradiction, missing_answer
+
+# One entry per task id in the spec. Every task must have an expected result.
+expected:
+  maturity_date:
+    status: supported              # supported | not_found | uncertain | failed
+    value: "2027-03-01"            # only with status: supported
+    evidence:                      # where YOU found it in the document
+      - {document: loan_001.pdf, page: 3, quote: "shall mature on 1 March 2027", role: supports}
+
+  service_approval:
+    status: not_found              # no value allowed unless status is supported
+    notes: The document only contains the request.
+
+  clauses:                         # a records task
+    status: supported
+    completeness: checked          # checked | partial | unknown
+    records:
+      - fields:
+          title: "Definitions"
+          instruction: "Defines the capitalized terms used in the agreement."
+        evidence:
+          - {document: loan_001.pdf, page: 1, quote: "1. Definitions"}

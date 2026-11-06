@@ -1,0 +1,56 @@
+# Example extraction specification: WHAT to extract (never which model to use).
+# Validate it with:  python -m extractor compile examples/spec.example.yaml
+version: 1
+name: loan agreement example
+
+tasks:
+  # --- value: "what is the value, if it is present?" -------------------------
+  - id: maturity_date
+    kind: value
+    description: The current maturity date of the loan.
+    output:
+      type: date
+      format: ISO-8601
+    scope:
+      time: current          # amendments may have moved the date
+    rules:
+      normalization: Convert to ISO-8601 (YYYY-MM-DD).
+      precedence:
+        - A later amendment overrides the original agreement.
+      on_absent: not_found
+
+  # --- interpretation: "what conclusion is supported under these criteria?" ---
+  - id: service_approval
+    kind: interpretation
+    description: Whether the requested service was approved.
+    output:
+      labels:                # `labels` without `type` means type: label
+        - {name: approved, meaning: Authorization is explicitly granted without conditions.}
+        - {name: conditional, meaning: Authorization is granted subject to stated conditions.}
+        - {name: rejected, meaning: Authorization is explicitly refused.}
+        - {name: pending, meaning: The decision is explicitly still open.}
+    rules:
+      decision_criteria:
+        - A request for approval is not an approval.
+        - Absence of an approval is not a rejection.
+        - Never drop a condition when approval is conditional.
+    depends_on: [maturity_date]
+
+  # --- records: "what are ALL the matching occurrences?" ---------------------
+  - id: clauses
+    kind: records
+    description: Every contractual clause in the agreement.
+    record:
+      identity: One numbered clause.
+      boundaries: A clause starts at its number or heading and ends before the next one.
+      fields:
+        - id: title
+          kind: value
+          description: The clause title, copied from the document.
+        - id: instruction
+          kind: interpretation
+          description: A short summary of the obligations the clause creates.
+          output: {type: text}
+          rules:
+            decision_criteria:
+              - Summarize only what the clause itself states.
