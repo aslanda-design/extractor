@@ -73,6 +73,17 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;max-height
     <table><thead><tr><th>Name</th><th>Size</th><th>Status</th><th></th></tr></thead><tbody id="docRows"></tbody></table>
     <div id="docEmpty" class="hint" style="margin-top:10px">No documents yet.</div>
   </div>
+  <div class="card" id="indexCard" hidden>
+    <h2 id="indexTitle">Chunking and indexes</h2>
+    <p class="hint">Sections, passages and the two search indexes (S04). The page view draws every passage's boundary on the original page; hover a box or a card to match them.</p>
+    <div id="indexSummary"></div>
+    <div class="row" style="margin:12px 0">
+      <input id="searchQ" class="grow" placeholder="Try a query against both indexes, e.g. when must the loan be repaid?">
+      <button class="btn" id="searchBtn">Search</button>
+    </div>
+    <div id="searchOut"></div>
+    <iframe id="indexFrame" hidden></iframe>
+  </div>
   <div class="card" id="parseCard" hidden>
     <h2 id="parseTitle">Parse result</h2>
     <div id="parseSummary"></div>
@@ -117,6 +128,11 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;max-height
     <p class="hint">Thresholds that decide when a page goes to OCR. Tune these against your scans, then re-parse.</p>
     <div id="cfgMsg"></div>
     <div class="grid" id="cfgForm"></div>
+  </div>
+  <div class="card">
+    <h2>Chunking and indexes</h2>
+    <p class="hint">How documents are cut into passages, which embedding model reads them, and which databases store the indexes. Changing the embedding model reindexes on the next <b>Chunk &amp; index</b>.</p>
+    <div class="grid" id="idxForm"></div>
     <div class="row" style="margin-top:14px">
       <button class="btn" id="cfgSave">Save</button>
       <button class="btn ghost" id="cfgReset">Reset to defaults</button>
@@ -130,7 +146,8 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;max-height
     <h2>Evaluation corpus</h2>
     <p class="hint">Your human-labeled cases in <code>evaluation/corpus/</code>.</p>
     <div id="corpusStatus"></div>
-    <div class="row" style="margin-top:10px"><button class="btn" id="corpusParse">Measure parsing quality</button></div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="corpusParse">Measure parsing quality</button>
+      <button class="btn" id="corpusIndex">Measure chunking quality</button></div>
     <div id="corpusResult" style="margin-top:12px"></div>
   </div>
 </section>
@@ -179,9 +196,12 @@ async function loadDocs() {
   $('#docEmpty').hidden = docs.length > 0;
   $('#docRows').innerHTML = docs.map(d => `<tr>
     <td>${esc(d.name)}</td><td>${fmtSize(d.size)}</td>
-    <td>${!d.parseable ? pill('not parseable yet', 'warn') : d.parsed ? pill('parsed', 'ok') : pill('not parsed', '')}</td>
+    <td>${!d.parseable ? pill('not parseable yet', 'warn') : d.parsed ? pill('parsed', 'ok') : pill('not parsed', '')}
+      ${d.indexed ? pill('chunked', 'ok') : ''}</td>
     <td style="text-align:right;white-space:nowrap">
       ${d.parseable ? `<button class="btn" data-act="parse" data-n="${esc(d.name)}">${d.parsed ? 'Re-parse' : 'Parse'}</button>` : ''}
+      ${d.parseable ? `<button class="btn" data-act="index" data-n="${esc(d.name)}">${d.indexed ? 'Re-chunk' : 'Chunk &amp; index'}</button>` : ''}
+      ${d.indexed ? `<button class="btn ghost" data-act="viewindex" data-n="${esc(d.name)}">Chunks</button>` : ''}
       ${d.parsed ? `<button class="btn ghost" data-act="view" data-n="${esc(d.name)}">Report</button>
       <a class="btn ghost" style="text-decoration:none" href="/api/documents/${encodeURIComponent(d.name)}/parsed" target="_blank">JSON</a>` : ''}
       <button class="btn danger" data-act="del" data-n="${esc(d.name)}">Delete</button>
@@ -193,6 +213,13 @@ $('#docRows').onclick = async e => {
   const name = b.dataset.n;
   if (b.dataset.act === 'del') { await api('/documents/' + encodeURIComponent(name), {method: 'DELETE'}); loadDocs(); }
   if (b.dataset.act === 'view') showReport(name);
+  if (b.dataset.act === 'viewindex') showIndexFrame(name);
+  if (b.dataset.act === 'index') {
+    busy(b, true, 'Chunking…'); $('#docMsg').innerHTML = '';
+    try { const r = await api(`/documents/${encodeURIComponent(name)}/index`, {method: 'POST'}); showIndex(r); }
+    catch (err) { $('#docMsg').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
+    busy(b, false); loadDocs();
+  }
   if (b.dataset.act === 'parse') {
     busy(b, true, 'Parsing…'); $('#docMsg').innerHTML = '';
     try { const r = await api(`/documents/${encodeURIComponent(name)}/parse`, {method: 'POST'}); showParse(r); }
@@ -206,6 +233,43 @@ function showReport(name) {
   const f = $('#reportFrame'); f.hidden = false; f.src = `/api/documents/${encodeURIComponent(name)}/report?t=${Date.now()}`;
   $('#parseCard').scrollIntoView({behavior: 'smooth'});
 }
+/* ---------- chunking and indexes ---------- */
+let indexDoc = null;
+function showIndexFrame(name) {
+  indexDoc = name; $('#indexCard').hidden = false; $('#indexTitle').textContent = 'Chunking and indexes · ' + name;
+  const f = $('#indexFrame'); f.hidden = false; f.src = `/api/documents/${encodeURIComponent(name)}/index-report?t=${Date.now()}`;
+  $('#indexCard').scrollIntoView({behavior: 'smooth'});
+}
+function showIndex(r) {
+  const c = r.chunking, open = r.unresolved_gaps.length, unres = r.references.filter(x => !x.resolved).length;
+  $('#indexSummary').innerHTML = `<p>${r.passages.length} passage(s) · tokens min/avg/max ${r.tokens.min}/${r.tokens.mean}/${r.tokens.max}
+      (limits ${c.min_tokens}–${c.max_tokens}) · ${r.continuations.length} page-break join(s) · ${r.references.length} reference(s)
+      ${unres ? pill(unres + ' unresolved', 'warn') : ''} ${open ? pill(open + ' parsing gap(s)', 'bad') : ''} · ${r.seconds}s</p>
+    <p class="hint">Embedding model <code>${esc(r.embedding_model)}</code> · lexical <code>${esc(r.stores.lexical)}</code> · vectors <code>${esc(r.stores.vector)}</code></p>
+    <details open><summary>Passages (${r.passages.length})</summary>
+    <table><thead><tr><th>Id</th><th>Kind</th><th>Tokens</th><th>Pages</th><th>Section</th><th>Text</th></tr></thead><tbody>
+    ${r.passages.map(p => `<tr><td><code>${esc(p.id.split(':').pop())}</code></td><td>${pill(p.kind, p.kind === 'table' ? 'warn' : '')}</td><td>${p.tokens}</td>
+      <td>${p.pages.join(', ')}${p.continued ? ' ' + pill('joined', 'ok') : ''}</td><td>${esc(p.heading_path.join(' › ') || '—')}</td>
+      <td>${esc(p.text.slice(0, 160))}${p.text.length > 160 ? '…' : ''}${p.note ? '<br>' + pill(p.note, '') : ''}</td></tr>`).join('')}</tbody></table></details>
+    ${r.references.length ? `<details><summary>References (${r.references.length})</summary><table><tbody>${r.references.map(x =>
+      `<tr><td>${esc(x.text)}</td><td><code>${esc(x.source_block_id)}</code></td><td>${x.resolved ? pill('→ ' + x.target_block_id, 'ok') : pill('unresolved', 'warn')}</td></tr>`).join('')}</tbody></table></details>` : ''}
+    ${open ? `<details><summary>Parsing gaps carried into coverage (${open})</summary>${r.unresolved_gaps.map(g => `<div class="msg bad">${esc(g)}</div>`).join('')}</details>` : ''}`;
+  $('#searchOut').innerHTML = '';
+  showIndexFrame(r.name);
+}
+$('#searchBtn').onclick = async e => {
+  if (!indexDoc) return;
+  busy(e.target, true, 'Searching…');
+  try {
+    const r = await api(`/documents/${encodeURIComponent(indexDoc)}/search`, json('POST', {query: $('#searchQ').value}));
+    const col = (title, rows) => `<div class="grow"><h2>${title}</h2>${rows.length ? `<table><tbody>${rows.map((h, i) => `<tr><td>${i + 1}</td>
+      <td><b>${h.score}</b> <code>${esc(h.id.split(':').pop())}</code> · p${h.pages.join(',')}<br><small>${esc(h.heading_path.join(' › '))}</small><br>${esc(h.text.slice(0, 200))}</td></tr>`).join('')}</tbody></table>` : '<p class="hint">No hits.</p>'}</div>`;
+    $('#searchOut').innerHTML = `<div class="row" style="align-items:flex-start;gap:20px">${col('Lexical (BM25)', r.lexical)}${col('Vector (embeddings)', r.vector)}</div>`;
+  } catch (err) { $('#searchOut').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
+  busy(e.target, false);
+};
+$('#searchQ').onkeydown = e => { if (e.key === 'Enter') $('#searchBtn').click(); };
+
 function showParse(r) {
   const open = r.issues.filter(i => !i.resolved);
   const ocr = r.pages.filter(p => p.route === 'ocr').length;
@@ -292,8 +356,30 @@ const PARSE_HELP = {
   ocr_dpi: 'Resolution of the first OCR attempt', ocr_hires_dpi: 'Resolution of the second (last) OCR attempt',
   use_cache: 'Reuse previous parses of the same file with the same settings',
 };
+const CHUNK_HELP = {
+  max_tokens: 'A passage never exceeds this many tokens (embedding-model tokens)',
+  min_tokens: 'Section groups below this merge with a neighbour',
+  infer_depth_from_numbering: 'Use "1.2.3" / "Article V" numbering when the parser gives flat heading levels',
+  link_continuations: 'Join paragraphs and tables that continue across a page break',
+  include_heading_in_index: 'Prepend the section path to the text that is indexed',
+  table_first_row_is_header: 'Treat the first table row as a header when the parser flags none',
+  resolve_references: 'Resolve "Section 5.2" / "Schedule A" to their headings',
+};
+const jsonText = o => JSON.stringify(o ?? {});
 async function loadConfig() {
-  cfg = await api('/config');
+  cfg = await api('/config'); const opts = await api('/options');
+  const sel = (id, label, names, cur) => `<label>${label}<select id="${id}">${names.map(n => `<option ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>`;
+  const ck = (k, v) => typeof v === 'boolean'
+    ? `<label>${k}<select data-ck="${k}"><option ${v ? 'selected' : ''} value="true">yes</option><option ${v ? '' : 'selected'} value="false">no</option></select><small>${CHUNK_HELP[k] || ''}</small></label>`
+    : `<label>${k}<input data-ck="${k}" type="number" step="any" value="${v}"><small>${CHUNK_HELP[k] || ''}</small></label>`;
+  $('#idxForm').innerHTML =
+    sel('cfgEmbName', 'embedding adapter', opts.embedding, cfg.models.embedding.name) +
+    `<label>embedding params (JSON)<input id="cfgEmbParams" value="${esc(jsonText(cfg.models.embedding.params))}"><small>e.g. {"model": "Qwen/Qwen3-Embedding-0.6B", "device": "auto"}</small></label>` +
+    sel('cfgLexName', 'lexical store', opts.stores.lexical, cfg.indexing.lexical_store.name) +
+    `<label>lexical store params (JSON)<input id="cfgLexParams" value="${esc(jsonText(cfg.indexing.lexical_store.params))}"></label>` +
+    sel('cfgVecName', 'vector store', opts.stores.vector, cfg.indexing.vector_store.name) +
+    `<label>vector store params (JSON)<input id="cfgVecParams" value="${esc(jsonText(cfg.indexing.vector_store.params))}"></label>` +
+    Object.entries(cfg.indexing.chunking).map(([k, v]) => ck(k, v)).join('');
   const p = cfg.parsing, params = cfg.models.parsing.params || {};
   const field = (k, v) => typeof v === 'boolean'
     ? `<label>${k}<select data-k="${k}"><option ${v ? 'selected' : ''} value="true">yes</option><option ${v ? '' : 'selected'} value="false">no</option></select><small>${PARSE_HELP[k] || ''}</small></label>`
@@ -312,6 +398,16 @@ $('#cfgSave').onclick = async () => {
   });
   next.models.parsing = {name: $('#cfgParser').value, params: {device: $('#cfgDevice').value,
     languages: $('#cfgLang').value.split(',').map(s => s.trim()).filter(Boolean)}};
+  document.querySelectorAll('#idxForm [data-ck]').forEach(el => {
+    const k = el.dataset.ck, v = el.value;
+    next.indexing.chunking[k] = v === 'true' ? true : v === 'false' ? false : Number(v);
+  });
+  try {
+    const parse = id => JSON.parse($(id).value || '{}');
+    next.models.embedding = {name: $('#cfgEmbName').value, params: parse('#cfgEmbParams')};
+    next.indexing.lexical_store = {name: $('#cfgLexName').value, params: parse('#cfgLexParams')};
+    next.indexing.vector_store = {name: $('#cfgVecName').value, params: parse('#cfgVecParams')};
+  } catch (e) { $('#cfgMsg').innerHTML = `<div class="msg bad">Params must be valid JSON: ${esc(e.message)}</div>`; return; }
   try { await api('/config', json('PUT', next)); $('#cfgMsg').innerHTML = '<div class="msg ok">Saved. Re-parse documents to apply.</div>'; loadConfig(); }
   catch (e) { $('#cfgMsg').innerHTML = `<div class="msg bad">${esc(e.message)}</div>`; }
 };
@@ -337,6 +433,22 @@ $('#corpusParse').onclick = async e => {
       <tr><th>Unresolved issues</th><td>${m.unresolved_issues}</td></tr></tbody></table>
       ${r.misses.length ? `<h2 style="margin-top:14px">Misses</h2><table><tbody>${r.misses.map(c =>
         `<tr><td>${esc(c.document)}</td><td>p${c.page ?? '?'}</td><td>${esc(c.quote)}</td><td>${c.found ? pill('wrong page', 'warn') : pill('not found', 'bad')}</td></tr>`).join('')}</tbody></table>` : ''}`;
+  } catch (err) { $('#corpusResult').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
+  busy(e.target, false);
+};
+
+$('#corpusIndex').onclick = async e => {
+  busy(e.target, true, 'Measuring…');
+  try {
+    const r = await api('/corpus/indexing', {method: 'POST'}), m = r.metrics;
+    const pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
+    $('#corpusResult').innerHTML = `<table><tbody>
+      <tr><th>Quotes inside ONE passage</th><td>${pct(r.containment)} (${m.in_single_passage}/${m.quotes_total})</td></tr>
+      <tr><th>Quotes cut across passages</th><td>${m.split_across_passages}</td></tr>
+      <tr><th>Quotes not found (parsing problem)</th><td>${m.not_found}</td></tr>
+      <tr><th>Documents / passages</th><td>${m.documents} / ${m.passages}</td></tr>
+      <tr><th>Tokens per passage (mean / max)</th><td>${Math.round(m.mean_tokens)} / ${m.max_tokens}</td></tr>
+      <tr><th>Structural violations</th><td>${m.invariant_violations.length ? m.invariant_violations.map(esc).join('<br>') : pill('none', 'ok')}</td></tr></tbody></table>`;
   } catch (err) { $('#corpusResult').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
   busy(e.target, false);
 };

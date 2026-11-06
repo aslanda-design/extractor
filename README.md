@@ -5,9 +5,10 @@ results with source evidence and explicit uncertainty. The design lives in
 [ARCHITECTURE.md](ARCHITECTURE.md); this file explains how to use the engine and what
 each part does.
 
-> **Status:** phases 0-1 (foundations, scope, YAML compiler) are complete and phase 2
-> (parsing) is implemented. Extraction itself (retrieval, value / interpretation / record
-> strategies, validation) is not built yet, so `run` returns `failed` for every task.
+> **Status:** phases 0-1 (foundations, scope, YAML compiler) are complete; phases 2
+> (parsing) and 3 (chunking + indexes) are implemented. Extraction itself (retrieval, value /
+> interpretation / record strategies, validation) is not built yet, so `run` returns `failed`
+> for every task (after parsing and indexing the documents).
 > See [PROGRESS.md](PROGRESS.md) for the plan.
 
 ## 1. Setup
@@ -21,7 +22,7 @@ python -m venv .venv
 
 # Real parser (phase 2). Install CUDA PyTorch first, then the parsing extras:
 .venv\Scripts\python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-.venv\Scripts\python -m pip install -e ".[parsing]"
+.venv\Scripts\python -m pip install -e ".[parsing,indexing]"
 ```
 
 Tests:
@@ -36,7 +37,8 @@ after that everything works offline.
 
 ## 2. Quick tour
 
-**Prefer a graphical interface?** Run `ui\launch.bat` (after `pip install -r uiequirements.txt`): upload documents, parse and inspect them, edit and validate specs, change settings and check your corpus from the browser. See [ui/README.md](ui/README.md).
+**Prefer a graphical interface?** It shows every step of the engine (parse, chunk and index, settings, corpus metrics). Run `ui\launch.bat` (after `pip install -r ui
+equirements.txt`): upload documents, parse and inspect them, edit and validate specs, change settings and check your corpus from the browser. See [ui/README.md](ui/README.md).
 
 Or use the command line:
 
@@ -52,11 +54,16 @@ python -m extractor parse contract.pdf
 #    -> .extractor_artifacts/reports/contract.report.html   (open in a browser)
 #    -> .extractor_artifacts/reports/contract.parsed.json
 
-# 4. Validate your labeled corpus, and measure parsing quality on it
+# 4. Chunk and index it: sections, passages, both indexes
+python -m extractor index contract.pdf --query "when is the loan repaid"
+#    -> .extractor_artifacts/reports/contract.index.html    (passage boundaries drawn on the pages)
+
+# 5. Validate your labeled corpus, and measure parsing / chunking quality on it
 python -m extractor eval
 python -m extractor eval --parsing
+python -m extractor eval --indexing
 
-# 5. Run the pipeline (S01/S02 real, the rest are stubs returning `failed`)
+# 6. Run the pipeline (S01-S04 real, the rest are stubs returning `failed`)
 python -m extractor run examples/spec.example.yaml --docs contract.pdf
 ```
 
@@ -92,7 +99,15 @@ models:
   parsing:
     name: layered            # "fake" (no-op) or "layered" (OpenDataLoader + Docling)
     params: {languages: [en], device: auto}   # device: auto | cuda | cpu
-  # embedding / reranking / extraction / interpretation / verification: "fake" for now
+  embedding:                 # swap the model here: nothing else changes
+    name: sentence_transformers   # any Hugging Face / local model; or "openai_compatible" for an API
+    params: {model: Qwen/Qwen3-Embedding-0.6B, device: auto}
+  # reranking / extraction / interpretation / verification: "fake" for now
+
+indexing:
+  chunking: {max_tokens: 350, min_tokens: 40}   # S04 passage size rules (tokens of the embedding model)
+  lexical_store: {name: sqlite_fts5}            # swap the databases here
+  vector_store: {name: numpy}
 
 parsing:                     # S03 thresholds - tune these against your scans
   min_native_chars: 30       # fewer characters on a page => no usable text layer => OCR
@@ -108,7 +123,9 @@ execution: {max_concurrency: 1, max_recovery_attempts: 2}
 storage: {artifact_dir: .extractor_artifacts}
 ```
 
-`parse` and `eval --parsing` use the `layered` parser by default when no config is given.
+Without `--config`, `parse`, `index`, `run` and `eval --parsing/--indexing` use the real stack
+(`layered` parser + the default embedding model) instead of the fakes.
+A fully commented example is in `examples/runtime.example.yaml`.
 
 ### 3.3 Document request (YAML, optional)
 
@@ -142,11 +159,13 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `spec/` | S02 | YAML -> checks -> `CompiledSpecification` (normalized tasks + dependency graph with parallel layers). `loader.py` shape, `checks.py` meaning, `dependency_graph.py` ordering, `compiler.py` glue. | A new validity rule: `checks.py` |
 | `parsing/` | S03 | Native text first, OCR where a page needs it. `routing.py` decides per page (and per picture region), `detectors.py` finds problems, `orchestrator.py` runs the retry ladder (native -> OCR -> high-res OCR), `normalize.py` assigns block ids, `report.py` writes the HTML inspection page, `metrics.py` scores against your labels. | Thresholds: runtime config. Logic: `routing.py`, `detectors.py` |
 | `parsing/backends/` | S03 | The only files that import a parsing library: `opendataloader.py` (native text/structure), `docling_ocr.py` (layout + OCR + tables), `pdfium_renderer.py` (page images). Swap a library by writing another class with the same methods (`backends/base.py`). | One file per library |
-| `adapters/` | S03, S06-S10 | Interfaces for parser / embedder / reranker / extractor / interpreter / verifier, the registry that builds them from the runtime config, and no-op fakes. **The only place model-specific code may live.** | New backend: adapter class + `register_adapter(...)` in `adapters/__init__.py` |
+| `adapters/` | S03, S04, S06-S10 | Interfaces for parser / embedder / reranker / extractor / interpreter / verifier, the registry that builds them from the runtime config, no-op fakes, and the embedding adapters `embedding_sentence_transformers.py` (any local model) and `embedding_openai.py` (any `/v1/embeddings` endpoint). **The only place model-specific code may live.** | New backend: adapter class + `register_adapter(...)` in `adapters/__init__.py` |
 | `config/` | - | Runtime settings (`RuntimeConfig`): models, limits, parsing thresholds, storage. | `runtime.py` |
 | `artifacts/` | - | SHA-256 fingerprints and the on-disk store (parsed documents, raw parser output, manifests, original files). Keys include document hash + settings, so a changed input or setting never hits stale cache. | `store.py` |
-| `pipeline/` | S05 | Wires stages in order. Stages not built yet are marked stubs in `run.py`; the parser is not connected yet (phase 3). | `run.py` |
-| `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing quality (`parsing_eval.py`). | `corpus.py` for the label format |
+| `indexing/` | S04 | **`chunking_pipeline.py` is the whole chunking pipeline in one readable file** (numbered steps, each calling a helper). Helpers: `structure.py` heading hierarchy, `continuation.py` page-break joins, `units.py` / `search_text.py` search view with a map back to the source, `sizing.py` merge/cut rules, `passages.py`, `references.py`. `builder.py` = cache + indexes + coverage ledger. `report.py` = HTML view. | Chunking behaviour: `chunking_pipeline.py` and the helper it calls; sizes: runtime config |
+| `indexing/stores/` | S04 | Pluggable databases: `base.py` interfaces (`LexicalIndex`, `VectorStore`), `sqlite_fts5.py` (BM25), `numpy_store.py` (exact cosine). | New database: subclass + register in `stores/__init__.py` |
+| `pipeline/` | S05 | Wires stages in order. S01-S04 run for real (parse + index every document, cached); later stages are marked stubs in `run.py`. | `run.py` |
+| `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing (`parsing_eval.py`) and chunking (`indexing_eval.py`) quality. | `corpus.py` for the label format |
 | `cli.py` | - | The command line. |
 
 The graphical interface is **not** part of this package: it lives in the separate top-level `ui/` folder and only calls the modules above. |
@@ -172,6 +191,40 @@ page that could not be read, is `failed` / an unresolved coverage limitation, ne
 5. Every block gets the id `<document_id>:p<page>:b<n>` and a bounding box in PDF points
    with the origin at the top-left, so evidence can be drawn on the original page.
 
+### How chunking works (S04)
+
+Open `src/extractor/indexing/chunking_pipeline.py`: it lists the steps in order.
+
+1. Headings become a hierarchy (`heading_path`, `parent_id`). Depth comes from the parser's
+   level, or from numbering ("1.2.3", "Article V") when the parser's levels are flat.
+2. Paragraphs and tables that continue across a page break are linked (source blocks stay
+   separate; only the passages are built over the chain; a repeated table header is dropped).
+3. Blocks become units, then the search view is built: normalized text (ligatures,
+   de-hyphenation, whitespace) with a character-level map back to the source text.
+4. Units are grouped by section. A section is one passage up to `max_tokens`; bigger ones are
+   cut at sentence boundaries, tiny ones (< `min_tokens`) merge with a neighbour, a lone heading
+   always joins the text it introduces, tables are their own passages (long ones split by rows
+   with the header row repeated). No overlap: passages know their neighbours instead.
+5. Explicit references ("Section 5.2", "Schedule A") are resolved to heading blocks;
+   unresolvable ones are recorded as unresolved, never guessed.
+
+Each passage keeps its original text and exact source ranges (`indexing/provenance.py` maps any
+part of a passage back to block, page and bounding box). Passage size is measured with the
+embedding model's own tokenizer.
+
+### Swapping the embedding model or the databases
+
+Both are chosen in the runtime config, never in code (see `examples/runtime.example.yaml`):
+
+- **Embedding model:** `models.embedding.params.model` (a bigger Qwen3-Embedding, a BGE model,
+  a local folder), or `name: openai_compatible` for an API / vLLM server. The index cache key
+  contains the model identity, so the next run re-chunks (sizes depend on its tokenizer) and
+  re-embeds automatically; the old index is left untouched.
+- **Databases:** `indexing.vector_store` / `indexing.lexical_store`. To add FAISS, LanceDB,
+  pgvector, Qdrant...: subclass `VectorStore` or `LexicalIndex` (`indexing/stores/base.py`),
+  register it in `indexing/stores/__init__.py`, select it by name. Vectors are cached separately,
+  so changing only the database does not re-run the embedding model.
+
 Image files (png, jpg, tiff) are treated as one OCR page. Other formats currently return an
 explicit `not_parsed` issue.
 
@@ -185,12 +238,17 @@ expected answers). Start from `evaluation/corpus/_template/` and read
 - `python -m extractor eval --parsing` parses each document and reports: quote recall
   (labeled quote found in the parse), page accuracy (found on the labeled page), OCR page
   count, empty/corrupted pages and unresolved issues.
+- `python -m extractor eval --indexing` chunks each document and reports how many labeled
+  quotes sit inside ONE passage (chunk boundaries respecting the evidence), how many were cut
+  across passages, how many are missing (a parsing problem), passage size stats and any
+  structural-invariant violations.
 - `python -m extractor eval --score` scores full engine output (meaningful after phase 5).
 
 ## 6. Rules of the codebase
 
 - Adding a model or library = a new adapter/backend class + registration. Nothing else changes.
 - The YAML says *what*; `RuntimeConfig` says *which model / limits*. Never mix them.
-- Heavy libraries are imported only inside `parsing/backends/*` and load lazily.
+- Heavy libraries are imported only inside `parsing/backends/*`, the embedding adapters and the store modules, and load lazily.
+- The chunking pipeline stays readable top-to-bottom in one file; models and databases are never hard-coded in it.
 - Everything crossing a stage boundary is a type from `contracts/`.
 - Update ARCHITECTURE.md when a contract changes, and PROGRESS.md as phases complete.

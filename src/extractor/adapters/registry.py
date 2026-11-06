@@ -29,6 +29,11 @@ def register_adapter(capability: Capability, name: str, factory: AdapterFactory)
     _REGISTRY[(capability, name)] = factory
 
 
+def registered_adapters(capability: Capability) -> list[str]:
+    """Names usable in `models.<capability>.name` of the runtime config."""
+    return sorted(name for cap, name in _REGISTRY if cap == capability)
+
+
 @dataclass(frozen=True)
 class AdapterSet:
     """The concrete adapters chosen for one run."""

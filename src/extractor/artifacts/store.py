@@ -50,9 +50,13 @@ class ArtifactStore:
         data = self.get(kind, key)
         return None if data is None else model.model_validate(data)
 
+    def original_path(self, sha256: str, fmt: str) -> Path:
+        """Where `retain_original` keeps a document (the file may not exist yet)."""
+        return self.root / "originals" / f"{sha256}.{fmt.lower()}"
+
     def retain_original(self, source: Path, sha256: str) -> Path:
         """Keep a copy of the original file so evidence can be inspected later."""
-        dest = self.root / "originals" / f"{sha256}{source.suffix.lower()}"
+        dest = self.original_path(sha256, source.suffix.lstrip("."))
         if not dest.exists():
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, dest)

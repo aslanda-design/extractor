@@ -83,10 +83,33 @@ class ParserAdapter(Adapter):
 
 
 class EmbedderAdapter(Adapter):
+    """Turns text into vectors. Swap the model by changing the runtime config only.
+
+    Implement `embed`. Override the others when the model needs it (query
+    prefixes, a real tokenizer, a known dimension).
+    """
+
     capability = Capability.EMBEDDING
 
     @abstractmethod
-    def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        """Vectors for passages (documents)."""
+
+    def embed_query(self, text: str) -> list[float]:
+        """Vector for a search query; models with asymmetric prompts override this."""
+        return self.embed([text])[0]
+
+    @property
+    def dimension(self) -> int | None:
+        """Vector size if known without running the model."""
+        return None
+
+    def count_tokens(self, text: str) -> int:
+        """Tokens of `text` under this model. Chunk sizes are measured with it.
+
+        Default: a rough 4-characters-per-token estimate.
+        """
+        return max(1, (len(text) + 3) // 4) if text else 0
 
 
 class RerankerAdapter(Adapter):

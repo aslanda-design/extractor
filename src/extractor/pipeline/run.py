@@ -3,7 +3,8 @@
 Each stage is one clearly marked step below. As phases are implemented, the
 stub for that stage is replaced by a call into its own package:
 
-    S03/S04 parse + index        -> (phase 2/3) not implemented
+    S03/S04 parse + index        -> implemented (phases 2/3): every document is parsed, chunked
+                                    and indexed (cached) before the tasks run
     S05     plan                 -> (phase 9)   not implemented
     S06     retrieve evidence    -> (phase 4)   not implemented
     S07-S09 extraction strategies-> (phases 5,7,8) not implemented
@@ -26,11 +27,25 @@ from ..contracts import (
     TaskStatus,
 )
 from ..contracts.common import Completeness, TaskKind
+from ..contracts.passage import IndexedDocument
 from ..contracts.result import ExecutionMetadata
+from ..indexing.builder import IndexBuilder
 from ..scope import DocumentRequest, build_manifest, resolve_task_documents
 from ..spec import compile_specification_file
 
-STAGE_VERSIONS = {"S01": "1", "S02": "1"}
+STAGE_VERSIONS = {"S01": "1", "S02": "1", "S03": "1", "S04": "1"}
+
+
+def index_documents(
+    manifest: DocumentManifest, adapters: AdapterSet, config: RuntimeConfig, store: ArtifactStore
+) -> dict[str, IndexedDocument]:
+    """S03 + S04 for every document in scope (cached by content and settings)."""
+    builder = IndexBuilder(config, adapters, store)
+    indexed = {}
+    for entry in manifest.documents:
+        if entry.document_id in manifest.scope.document_ids:
+            indexed[entry.document_id] = builder.index(entry, store.original_path(entry.sha256, entry.format))
+    return indexed
 
 
 def run_pipeline(
@@ -38,8 +53,12 @@ def run_pipeline(
     manifest: DocumentManifest,
     adapters: AdapterSet,
     config: RuntimeConfig,
+    indexed: dict[str, IndexedDocument] | None = None,
 ) -> list[TaskResult]:
-    """Return one TaskResult per task, in declaration order (required fields always get one)."""
+    """Return one TaskResult per task, in declaration order (required fields always get one).
+
+    `indexed` is the output of `index_documents`; without it the S03/S04 stage is skipped.
+    """
     execution = ExecutionMetadata(
         document_hashes={d.document_id: d.sha256 for d in manifest.documents},
         schema_hash=spec.schema_hash,
@@ -59,8 +78,16 @@ def run_pipeline(
             diagnostics.append("several documents without relationships or precedence rules")
         diagnostics += [f"review: {i.message}" for i in spec.review_issues if i.task_id == task.id]
 
-        # S03-S11: not implemented yet.
-        diagnostics.append("extraction stages S03-S11 are not implemented yet")
+        # S03/S04 summary (the data itself is used by the later stages).
+        if indexed is not None:
+            docs = [indexed[d] for d in document_ids if d in indexed]
+            passages = sum(len(d.passages) for d in docs)
+            open_gaps = sum(len(d.coverage.unresolved()) for d in docs)
+            diagnostics.append(f"indexed {len(docs)} document(s): {passages} passage(s), "
+                               f"{open_gaps} unresolved parsing gap(s)")
+
+        # S05-S11: not implemented yet.
+        diagnostics.append("extraction stages S05-S11 are not implemented yet")
 
         results[task_id] = TaskResult(
             task_id=task.id,
@@ -82,4 +109,6 @@ def run_files(
     store = ArtifactStore(config.storage.artifact_dir)
     spec = compile_specification_file(spec_path)
     manifest = build_manifest(request, store)
-    return run_pipeline(spec, manifest, build_adapters(config, store), config)
+    adapters = build_adapters(config, store)
+    indexed = index_documents(manifest, adapters, config, store)
+    return run_pipeline(spec, manifest, adapters, config, indexed)

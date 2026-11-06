@@ -16,6 +16,10 @@ class SpecBody(BaseModel):
     name: str | None = None
 
 
+class SearchBody(BaseModel):
+    query: str
+
+
 class RunBody(BaseModel):
     spec: str
     documents: list[str]
@@ -55,6 +59,18 @@ def create_app(workspace_dir: Path) -> FastAPI:
     def report(name: str):
         return FileResponse(ws.report_path(name, "report"), media_type="text/html")
 
+    @app.post("/api/documents/{name}/index")
+    def index_document(name: str):  # chunk + index (S04); loads the embedding model on first use
+        return ws.index(name)
+
+    @app.get("/api/documents/{name}/index-report")
+    def index_report(name: str):
+        return FileResponse(ws.report_path(name, "index"), media_type="text/html")
+
+    @app.post("/api/documents/{name}/search")
+    def search(name: str, body: SearchBody):
+        return ws.search(name, body.query)
+
     @app.get("/api/documents/{name}/parsed")
     def parsed(name: str):
         return FileResponse(ws.report_path(name, "parsed"), media_type="application/json")
@@ -82,6 +98,10 @@ def create_app(workspace_dir: Path) -> FastAPI:
         return ws.run(body.spec, body.documents)
 
     # --- settings ---
+    @app.get("/api/options")
+    def options():
+        return ws.options()
+
     @app.get("/api/config")
     def get_config():
         return ws.get_config().model_dump(mode="json")
@@ -98,6 +118,10 @@ def create_app(workspace_dir: Path) -> FastAPI:
     @app.get("/api/corpus")
     def corpus():
         return ws.corpus_status()
+
+    @app.post("/api/corpus/indexing")
+    def corpus_indexing():
+        return ws.corpus_indexing()
 
     @app.post("/api/corpus/parsing")
     def corpus_parsing():

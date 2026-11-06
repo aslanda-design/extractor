@@ -17,11 +17,11 @@ Opens http://127.0.0.1:8765 in your browser. Options: `--port 8765`, `--workspac
 
 | Tab | What you do |
 | --- | --- |
-| **Documents** | Upload PDFs/images (drag and drop), click **Parse**, see per-page routing (native vs OCR), issues, and the interactive report (page image beside parsed blocks, boxes overlaid) |
+| **Documents** | Upload PDFs/images (drag and drop). **Parse**: per-page routing (native vs OCR), issues, and the interactive report (page image beside parsed blocks, boxes overlaid). **Chunk & index**: passages with their sections, token sizes, page-break joins, references, and a page view with every passage's boundary drawn on the original page; a search box queries the lexical and vector indexes side by side |
 | **Specification** | Edit the extraction YAML with live validation: errors with their YAML path, task table, parallel execution layers, review flags. Save under a name |
 | **Run** | Pick a spec and documents and run the pipeline. Extraction stages are not built yet, so tasks return `failed` by design; it already shows scope, precedence and result format |
-| **Settings** | Edit parsing thresholds, parser choice, OCR device and languages. Saved to the workspace; re-parse to apply |
-| **Corpus** | Validate `evaluation/corpus/` and measure parsing quality (quote recall, page accuracy, unresolved issues) |
+| **Settings** | Edit parsing thresholds, parser choice, OCR device and languages, plus the chunking rules, the embedding model (adapter + params) and the lexical / vector databases. Saved to the workspace; re-parse / re-chunk to apply |
+| **Corpus** | Validate `evaluation/corpus/` and measure parsing quality (quote recall, page accuracy, unresolved issues) and chunking quality (share of labeled quotes that sit inside one passage) |
 
 The first OCR parse downloads models and can take a couple of minutes; later ones reuse
 them. Only one parse runs at a time (the GPU is shared).

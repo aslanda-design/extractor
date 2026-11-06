@@ -1,0 +1,52 @@
+# Runtime configuration: WHICH models, databases and limits to use.
+# (The extraction YAML says WHAT to extract; nothing here changes a task's meaning.)
+# Use it with:  python -m extractor index doc.pdf --config examples/runtime.example.yaml
+#
+# Everything marked "swap" can be changed here without touching code.
+
+models:
+  parsing:
+    name: layered                    # OpenDataLoader (native text) + Docling (OCR)
+    params: {languages: [en], device: auto}
+
+  # --- swap: embedding model --------------------------------------------------------------
+  embedding:
+    name: sentence_transformers      # any Hugging Face / local model
+    params:
+      model: Qwen/Qwen3-Embedding-0.6B     # e.g. Qwen/Qwen3-Embedding-4B, BAAI/bge-large-en-v1.5, ./my-local-model
+      device: auto
+      # dtype: float16
+      # query_prompt_name: query           # models that define named prompts (Qwen3, e5, bge)
+      # query_prefix: ""                   # models that need a text prefix instead
+      # max_seq_length: 512
+  #
+  # Production alternative: an API / server exposing /v1/embeddings
+  # embedding:
+  #   name: openai_compatible
+  #   params:
+  #     base_url: https://api.openai.com/v1      # or http://my-vllm-host:8000/v1
+  #     model: text-embedding-3-large
+  #     api_key_env: OPENAI_API_KEY              # name of the environment variable that holds the key
+
+indexing:
+  chunking:                          # S04 passage rules (sizes in tokens of the embedding model)
+    max_tokens: 350
+    min_tokens: 40
+    infer_depth_from_numbering: true
+    link_continuations: true
+    include_heading_in_index: true
+    table_first_row_is_header: true
+    resolve_references: true
+
+  # --- swap: databases (registered in src/extractor/indexing/stores/__init__.py) -----------
+  lexical_store: {name: sqlite_fts5}
+  vector_store: {name: numpy}        # brute force, exact. Later e.g. {name: faiss} / {name: qdrant, params: {url: ...}}
+
+parsing:                             # S03 routing thresholds
+  min_native_chars: 30
+  max_garbage_ratio: 0.03
+  ocr_dpi: 200
+  ocr_hires_dpi: 300
+
+storage:
+  artifact_dir: .extractor_artifacts

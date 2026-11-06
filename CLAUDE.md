@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## State of the repo
 
-`ARCHITECTURE.md` (v1.0) is the agreed design for a general document extraction engine (YAML spec in, structured results with evidence and explicit uncertainty out). Implementation proceeds in phases (0 foundations, 1 scope + YAML compiler, 2 parsing, 3 indexing, 4 retrieval, 5 value, 6 validation, 7 interpretation, 8 records, 9 orchestrator/recovery, 10 results, 11 hardening). Phases 0 and 1 are done; phase 2 (S03 parsing, `parsing/`) is implemented and awaits measurement on the user's real corpus; `pipeline/run.py` does not call the parser yet and later stages are stubs that return `failed`. Progress and per-phase definitions live in `PROGRESS.md` (gitignored).
+`ARCHITECTURE.md` (v1.0) is the agreed design for a general document extraction engine (YAML spec in, structured results with evidence and explicit uncertainty out). Implementation proceeds in phases (0 foundations, 1 scope + YAML compiler, 2 parsing, 3 indexing, 4 retrieval, 5 value, 6 validation, 7 interpretation, 8 records, 9 orchestrator/recovery, 10 results, 11 hardening). Phases 0 and 1 are done; phases 2 (S03 parsing, `parsing/`) and 3 (S04 chunking + indexes, `indexing/`) are implemented and await measurement on the user's real corpus; `pipeline/run.py` parses and indexes every document, then later stages are stubs that return `failed`. Progress and per-phase definitions live in `PROGRESS.md` (gitignored).
 
 `README.md` maps each stage to its folder under `src/extractor/`. Keep that map and the "one concern per folder" layout when adding phases; every module docstring names its stage.
 
@@ -14,14 +14,26 @@ Python venv is `.venv` (Windows: `.venv\Scripts\python`).
 
 - Install: `python -m pip install -e ".[dev]"`
 - Tests: `python -m pytest` (single test: `python -m pytest tests/test_spec.py::test_dependency_cycle`); real-backend parsing tests: `python -m pytest -m integration`
-- Parsing needs Java on PATH, CUDA PyTorch and `pip install -e ".[parsing]"` (see README); parsing libraries are imported only inside `parsing/backends/*`.
+- Parsing needs Java on PATH, CUDA PyTorch and `pip install -e ".[parsing,indexing]"` (see README); parsing libraries are imported only inside `parsing/backends/*`.
 - UI: `ui\launch.bat` or `python ui/run.py` (separate top-level `ui/` folder; deps in `ui/requirements.txt`; it must only use the engine's public modules, never the other way round)
-- CLI: `python -m extractor compile|manifest|parse|run|eval` (see README.md)
+- CLI: `python -m extractor compile|manifest|parse|index|run|eval` (see README.md)
 - Human-labeled evaluation data goes in `evaluation/corpus/` (user-supplied; see its README).
 
 Read `ARCHITECTURE.md` before implementing anything. Treat its decisions (Section 2) and stage contracts (S01–S13, Section 6) as constraints, and update it whenever a contract changes.
 
+## The UI must show every step
+
+Every pipeline step or capability you add must also be visible and usable in the web interface (`ui/`),
+not only in the CLI, in the same change that adds it. Backend logic goes in `ui/service.py`, the route in
+`ui/server.py`, the screen in `ui/static/index.html`, plus a test in `tests/` and a line in `ui/README.md`.
+For each new step the UI should offer: a way to run it on an uploaded document, a visual of its output
+(like the parse report and the chunk view), its settings in the Settings tab, and its quality metric in the
+Corpus tab when it has one. The UI only calls public `extractor.*` modules; the engine never imports `ui/`.
+A phase is not done until its UI part exists.
+
 ## Constraints that are easy to violate
+
+- The whole chunking pipeline must stay readable top-to-bottom in `indexing/chunking_pipeline.py` (steps call helpers in their own modules). Embedding model and vector/lexical databases are pluggable through the runtime config and registries; never hard-code a model or database in the pipeline.
 
 - Python package with a deterministic orchestrator. Models only do bounded tasks, and all vendor/model-specific behavior stays inside adapters (parsing, embedding, reranking, extraction, interpretation, verification).
 - YAML describes *what* to extract; runtime config describes *which models/settings*. Never mix them.

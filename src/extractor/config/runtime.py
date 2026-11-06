@@ -57,15 +57,41 @@ class ParsingConfig(StrictModel):
     use_cache: bool = True
 
 
+class ChunkingConfig(StrictModel):
+    """S04 passage-building rules. Sizes are in tokens of the embedding model's tokenizer."""
+
+    max_tokens: int = Field(default=350, ge=16)  # a passage never exceeds this (except an unsplittable word)
+    min_tokens: int = Field(default=40, ge=0)  # smaller section groups merge with a neighbour
+    infer_depth_from_numbering: bool = True  # "1.2.3", "Article V" when parser levels are flat
+    link_continuations: bool = True  # join paragraphs / tables that span a page break
+    include_heading_in_index: bool = True  # prepend the heading path to the text that gets indexed
+    table_first_row_is_header: bool = True  # when the parser flags no header cells
+    resolve_references: bool = True
+
+
+class StoreSelection(StrictModel):
+    """Which index implementation to use. `name` is a key in the store registry."""
+
+    name: str
+    params: dict = {}  # passed to the store factory (path, url, api key env var, ...)
+
+
+class IndexingConfig(StrictModel):
+    chunking: ChunkingConfig = ChunkingConfig()
+    lexical_store: StoreSelection = StoreSelection(name="sqlite_fts5")
+    vector_store: StoreSelection = StoreSelection(name="numpy")
+
+
 class RuntimeConfig(StrictModel):
     models: ModelsConfig = ModelsConfig()
     execution: ExecutionConfig = ExecutionConfig()
     parsing: ParsingConfig = ParsingConfig()
+    indexing: IndexingConfig = IndexingConfig()
     storage: StorageConfig = StorageConfig()
 
     def fingerprint(self) -> str:
         """Identity of the settings that can change results (storage path excluded)."""
-        return fingerprint(self.models, self.execution, self.parsing)
+        return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking)
 
     def parsing_fingerprint(self) -> str:
         """Cache key part for parsed documents: only parser choice + parsing settings."""

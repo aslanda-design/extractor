@@ -17,15 +17,19 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from extractor.adapters import build_adapters
-from extractor.artifacts import ArtifactStore
+from extractor.adapters import Capability, build_adapters, registered_adapters
+from extractor.artifacts import ArtifactStore, fingerprint
 from extractor.config import RuntimeConfig
 from extractor.contracts.specification import SpecificationFile
 from extractor.evaluation import CorpusError, load_corpus
+from extractor.evaluation.indexing_eval import evaluate_indexing
 from extractor.evaluation.parsing_eval import evaluate_parsing
+from extractor.indexing.builder import IndexBuilder
+from extractor.indexing.report import write_index_report
+from extractor.indexing.stores import registered_stores
 from extractor.parsing.backends.pdfium_renderer import PdfiumRenderer
 from extractor.parsing.report import write_report
-from extractor.pipeline import run_pipeline
+from extractor.pipeline import index_documents, run_pipeline
 from extractor.scope import DocumentRequest, ManifestError, build_manifest
 from extractor.spec import SpecificationError, compile_specification, parse_specification
 
@@ -56,17 +60,33 @@ class Workspace:
         self.config_path = self.root / "runtime.yaml"
         self.store = ArtifactStore(self.root.parent)  # shares models/caches with the CLI
         self._lock = threading.Lock()  # one parse at a time: the GPU is shared
+        self._builders: dict[str, tuple] = {}  # config fingerprint -> (IndexBuilder, AdapterSet); keeps models loaded
         if not (self.specs / "example.yaml").exists() and EXAMPLE_SPEC.exists():
             (self.specs / "example.yaml").write_text(EXAMPLE_SPEC.read_text(encoding="utf-8"), encoding="utf-8")
 
     # --- settings ---------------------------------------------------------------
 
     def default_config(self) -> RuntimeConfig:
-        """The UI is for real use, so parsing defaults to the real `layered` parser."""
+        """The UI is for real use: real parser and the default embedding model, not the fakes."""
         base = RuntimeConfig()
-        models = base.models.model_copy(
-            update={"parsing": base.models.parsing.model_copy(update={"name": "layered"})})
+        models = base.models.model_copy(update={
+            "parsing": base.models.parsing.model_copy(update={"name": "layered"}),
+            "embedding": base.models.embedding.model_copy(update={"name": "sentence_transformers"})})
         return base.model_copy(update={"models": models})
+
+    @staticmethod
+    def options() -> dict:
+        """Names the Settings tab can offer (everything registered in the engine)."""
+        return {"embedding": registered_adapters(Capability.EMBEDDING), "stores": registered_stores()}
+
+    def _builder(self, config: RuntimeConfig) -> tuple:
+        """IndexBuilder + adapters for this config, reused so the embedding model stays loaded."""
+        key = fingerprint(config)
+        if key not in self._builders:
+            self._builders.clear()  # keep one: models are big
+            adapters = build_adapters(config, self.store)
+            self._builders[key] = (IndexBuilder(config, adapters, self.store), adapters)
+        return self._builders[key]
 
     def get_config(self) -> RuntimeConfig:
         if self.config_path.exists():
@@ -111,6 +131,7 @@ class Workspace:
                     "size": p.stat().st_size,
                     "parseable": p.suffix.lower() in PARSEABLE,
                     "parsed": (self.reports / f"{p.stem}.report.html").exists(),
+                    "indexed": (self.reports / f"{p.stem}.index.html").exists(),
                 })
         return out
 
@@ -142,10 +163,67 @@ class Workspace:
 
     def report_path(self, name: str, kind: str) -> Path:
         stem = Path(_safe_name(name)).stem
-        path = self.reports / f"{stem}.{'report.html' if kind == 'report' else 'parsed.json'}"
+        suffix = {"report": "report.html", "parsed": "parsed.json", "index": "index.html"}[kind]
+        path = self.reports / f"{stem}.{suffix}"
         if not path.is_file():
-            raise UiError(f"'{name}' has not been parsed yet")
+            raise UiError(f"'{name}' has not been {'chunked' if kind == 'index' else 'parsed'} yet")
         return path
+
+    # --- chunking and indexes (S04) -----------------------------------------------
+
+    def index(self, name: str) -> dict:
+        """Parse (cached) + chunk + index one document; writes the HTML view, returns a summary."""
+        path = self.document_path(name)
+        if path.suffix.lower() not in PARSEABLE:
+            raise UiError(f"the parser supports PDF and image files, not '{path.suffix}'")
+        config = self.get_config()
+        started = time.time()
+        with self._lock:
+            entry = build_manifest(DocumentRequest.from_paths([path]), self.store).documents[0]
+            builder, _ = self._builder(config)
+            doc = builder.index(entry, path)
+            renderer = PdfiumRenderer()
+            write_index_report(doc, path, renderer, self.reports / f"{path.stem}.index.html")
+            if not (self.reports / f"{path.stem}.report.html").exists():  # keep the parse view in step
+                write_report(doc.representation, path, renderer, self.reports / f"{path.stem}.report.html")
+                (self.reports / f"{path.stem}.parsed.json").write_text(
+                    doc.representation.model_dump_json(indent=2), encoding="utf-8")
+        sizes = [p.token_count for p in doc.passages]
+        return {
+            "name": name,
+            "seconds": round(time.time() - started, 1),
+            "embedding_model": doc.embedding_model,
+            "chunking": config.indexing.chunking.model_dump(mode="json"),
+            "stores": {"lexical": config.indexing.lexical_store.name, "vector": config.indexing.vector_store.name},
+            "tokens": {"min": min(sizes, default=0), "max": max(sizes, default=0),
+                       "mean": round(sum(sizes) / len(sizes)) if sizes else 0},
+            "passages": [{"id": p.passage_id, "kind": p.kind.value, "tokens": p.token_count, "pages": p.pages,
+                          "heading_path": p.heading_path, "continued": p.continued_across_pages,
+                          "note": p.note, "text": p.text} for p in doc.passages],
+            "continuations": [c.model_dump(mode="json") for c in doc.continuations],
+            "references": [r.model_dump(mode="json") for r in doc.references],
+            "unresolved_gaps": [e.note for e in doc.coverage.unresolved()],
+        }
+
+    def search(self, name: str, query: str, k: int = 5) -> dict:
+        """Run a query against the document's lexical and vector indexes."""
+        if not query.strip():
+            raise UiError("type a query")
+        path = self.document_path(name)
+        config = self.get_config()
+        with self._lock:
+            entry = build_manifest(DocumentRequest.from_paths([path]), self.store).documents[0]
+            builder, adapters = self._builder(config)
+            doc = builder.index(entry, path)  # cached after the first time
+            if not doc.passages:
+                raise UiError("this document produced no passages to search")
+            lexical = builder.lexical.search(doc.index_key, query, k)
+            vector = builder.vectors.query(doc.index_key, adapters.embedder.embed_query(query), k)
+
+        def rows(hits):
+            return [{"id": h.id, "score": round(h.score, 4), "heading_path": doc.passage(h.id).heading_path,
+                     "pages": doc.passage(h.id).pages, "text": doc.passage(h.id).text} for h in hits]
+        return {"query": query, "lexical": rows(lexical), "vector": rows(vector)}
 
     # --- specifications ---------------------------------------------------------
 
@@ -197,7 +275,10 @@ class Workspace:
             manifest = build_manifest(DocumentRequest.from_paths(paths), self.store)
         except ManifestError as exc:
             raise UiError(str(exc)) from None
-        results = run_pipeline(spec, manifest, build_adapters(config, self.store), config)
+        with self._lock:
+            adapters = build_adapters(config, self.store)
+            indexed = index_documents(manifest, adapters, config, self.store)  # S03 + S04 (cached)
+            results = run_pipeline(spec, manifest, adapters, config, indexed)
         return {
             "manifest": manifest.model_dump(mode="json"),
             "results": [r.model_dump(mode="json") for r in results],
@@ -211,6 +292,16 @@ class Workspace:
         except CorpusError as exc:
             return {"ok": False, "problems": str(exc).splitlines()}
         return {"ok": True, "cases": [c.case_id for c in corpus.cases], "path": str(CORPUS_DIR)}
+
+    def corpus_indexing(self) -> dict:
+        corpus = load_corpus(CORPUS_DIR)
+        if not corpus.cases:
+            raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
+        config = self.get_config()
+        with self._lock:
+            builder, _ = self._builder(config)
+            metrics = evaluate_indexing(corpus, builder)
+        return {"metrics": metrics.model_dump(mode="json"), "containment": metrics.containment}
 
     def corpus_parsing(self) -> dict:
         corpus = load_corpus(CORPUS_DIR)

@@ -8,6 +8,7 @@ One file per contract family:
     document.py       DocumentRepresentation      (S03/S04)
     evidence.py       EvidencePackage             (S06)
     candidate.py      Candidate / interpretation  (S07/S08)
+    passage.py        Passage / IndexedDocument   (S04)
     record.py         Record                      (S09)
     coverage.py       CoverageLedger              (S04+)
     validation.py     ValidationReport            (S10)
@@ -28,6 +29,7 @@ from .coverage import CoverageEntry, CoverageLedger, CoverageState
 from .document import DocumentRepresentation, ParsingIssue, SourceBlock
 from .evidence import EvidenceItem, EvidencePackage
 from .manifest import DocumentEntry, DocumentManifest, DocumentRelationship, Scope
+from .passage import Continuation, IndexedDocument, Passage, PassageSegment, Reference
 from .record import FieldResult, Record
 from .result import EvidenceLink, ExecutionMetadata, TaskResult
 from .specification import CompiledSpecification, SpecificationFile, SpecIssue
@@ -41,5 +43,6 @@ __all__ = [
     "EvidencePackage", "DocumentEntry", "DocumentManifest", "DocumentRelationship", "Scope",
     "FieldResult", "Record", "EvidenceLink", "ExecutionMetadata", "TaskResult",
     "CompiledSpecification", "SpecificationFile", "SpecIssue", "TaskSpecification",
-    "ValidationFinding", "ValidationReport",
+    "ValidationFinding", "ValidationReport", "Continuation", "IndexedDocument", "Passage",
+    "PassageSegment", "Reference",
 ]
