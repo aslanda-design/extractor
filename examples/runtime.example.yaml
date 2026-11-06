@@ -28,6 +28,19 @@ models:
   #     model: text-embedding-3-large
   #     api_key_env: OPENAI_API_KEY              # name of the environment variable that holds the key
 
+  # --- swap: reranker (the cross-encoder that re-judges retrieved passages) ----------------
+  reranking:
+    name: cross_encoder              # any sentence-transformers CrossEncoder
+    params:
+      model: tomaarsen/Qwen3-Reranker-0.6B-seq-cls   # or BAAI/bge-reranker-v2-m3 (then prompt_format: plain)
+      prompt_format: qwen3           # qwen3 | plain
+      # instruction: "..."           # what "relevant" means (qwen3 format)
+  #
+  # Production alternative: a rerank API (Cohere, Jina, vLLM...)
+  # reranking:
+  #   name: http_rerank
+  #   params: {base_url: https://api.cohere.com/v2, model: rerank-v3.5, api_key_env: COHERE_API_KEY}
+
 indexing:
   chunking:                          # S04 passage rules (sizes in tokens of the embedding model)
     max_tokens: 350
@@ -41,6 +54,23 @@ indexing:
   # --- swap: databases (registered in src/extractor/indexing/stores/__init__.py) -----------
   lexical_store: {name: sqlite_fts5}
   vector_store: {name: numpy}        # brute force, exact. Later e.g. {name: faiss} / {name: qdrant, params: {url: ...}}
+
+# --- retrieval depth: "light" extraction vs "deep" extraction --------------------------------
+retrieval:
+  profile: standard                  # light | standard | deep | one of yours below. CLI: --profile deep
+  profiles:
+    # built-in profiles can be tweaked or you can define new ones (start from another with `extends`)
+    thorough_legal:
+      extends: deep
+      budget_tokens: 12000           # evidence tokens per task (the extraction model's context sets the real limit)
+      qualifier_slots: 4
+    # every setting available (defaults shown are the "standard" profile):
+    #   candidates_per_list: 30   use_lexical/use_vector/use_structural: true   rrf_k: 60
+    #   rerank: true   rerank_top_n: 30   short_doc_passages: 64 (documents this small are reranked whole)
+    #   max_passages: 8   min_passages: 1   score_drop_ratio: 0.3   dedupe_similarity: 0.85   max_per_section: 3
+    #   qualifier_pass: true   qualifier_slots: 2   qualifier_candidates: 10   qualifier_keywords: [...]
+    #   neighbours: 1   expand_references: true   max_reference_passages: 2   expand_definitions: true
+    #   max_expansion_rounds: 1   promote_ratio: 0.6   budget_tokens: 4000
 
 parsing:                             # S03 routing thresholds
   min_native_chars: 30

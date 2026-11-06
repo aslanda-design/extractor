@@ -6,9 +6,9 @@ results with source evidence and explicit uncertainty. The design lives in
 each part does.
 
 > **Status:** phases 0-1 (foundations, scope, YAML compiler) are complete; phases 2
-> (parsing) and 3 (chunking + indexes) are implemented. Extraction itself (retrieval, value /
-> interpretation / record strategies, validation) is not built yet, so `run` returns `failed`
-> for every task (after parsing and indexing the documents).
+> (parsing), 3 (chunking + indexes) and 4 (evidence retrieval) are implemented. The extraction
+> strategies (value / interpretation / records) and validation are not built yet, so `run`
+> returns `failed` for every task (after parsing, indexing and retrieving evidence for it).
 > See [PROGRESS.md](PROGRESS.md) for the plan.
 
 ## 1. Setup
@@ -58,13 +58,17 @@ python -m extractor parse contract.pdf
 python -m extractor index contract.pdf --query "when is the loan repaid"
 #    -> .extractor_artifacts/reports/contract.index.html    (passage boundaries drawn on the pages)
 
-# 5. Validate your labeled corpus, and measure parsing / chunking quality on it
+# 5. See every step of evidence retrieval for one task, at a chosen depth
+python -m extractor retrieve examples/spec.example.yaml maturity_date --docs contract.pdf --profile deep
+
+# 6. Validate your labeled corpus, and measure parsing / chunking / retrieval quality on it
 python -m extractor eval
 python -m extractor eval --parsing
 python -m extractor eval --indexing
+python -m extractor eval --retrieval --profile light,standard,deep
 
-# 6. Run the pipeline (S01-S04 real, the rest are stubs returning `failed`)
-python -m extractor run examples/spec.example.yaml --docs contract.pdf
+# 7. Run the whole engine (S01-S04 and S06 real, the rest are stubs returning `failed`)
+python -m extractor run examples/spec.example.yaml --docs contract.pdf --profile standard
 ```
 
 ## 3. The two inputs you write
@@ -102,12 +106,20 @@ models:
   embedding:                 # swap the model here: nothing else changes
     name: sentence_transformers   # any Hugging Face / local model; or "openai_compatible" for an API
     params: {model: Qwen/Qwen3-Embedding-0.6B, device: auto}
-  # reranking / extraction / interpretation / verification: "fake" for now
+  reranking:
+    name: cross_encoder           # or "http_rerank" for Cohere / Jina / vLLM
+    params: {model: tomaarsen/Qwen3-Reranker-0.6B-seq-cls}
+  # extraction / interpretation / verification: "fake" for now
 
 indexing:
   chunking: {max_tokens: 350, min_tokens: 40}   # S04 passage size rules (tokens of the embedding model)
   lexical_store: {name: sqlite_fts5}            # swap the databases here
   vector_store: {name: numpy}
+
+retrieval:                                      # S06 depth of extraction
+  profile: standard                             # light | standard | deep | your own
+  profiles:
+    thorough_legal: {extends: deep, budget_tokens: 12000}
 
 parsing:                     # S03 thresholds - tune these against your scans
   min_native_chars: 30       # fewer characters on a page => no usable text layer => OCR
@@ -159,12 +171,13 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `spec/` | S02 | YAML -> checks -> `CompiledSpecification` (normalized tasks + dependency graph with parallel layers). `loader.py` shape, `checks.py` meaning, `dependency_graph.py` ordering, `compiler.py` glue. | A new validity rule: `checks.py` |
 | `parsing/` | S03 | Native text first, OCR where a page needs it. `routing.py` decides per page (and per picture region), `detectors.py` finds problems, `orchestrator.py` runs the retry ladder (native -> OCR -> high-res OCR), `normalize.py` assigns block ids, `report.py` writes the HTML inspection page, `metrics.py` scores against your labels. | Thresholds: runtime config. Logic: `routing.py`, `detectors.py` |
 | `parsing/backends/` | S03 | The only files that import a parsing library: `opendataloader.py` (native text/structure), `docling_ocr.py` (layout + OCR + tables), `pdfium_renderer.py` (page images). Swap a library by writing another class with the same methods (`backends/base.py`). | One file per library |
-| `adapters/` | S03, S04, S06-S10 | Interfaces for parser / embedder / reranker / extractor / interpreter / verifier, the registry that builds them from the runtime config, no-op fakes, and the embedding adapters `embedding_sentence_transformers.py` (any local model) and `embedding_openai.py` (any `/v1/embeddings` endpoint). **The only place model-specific code may live.** | New backend: adapter class + `register_adapter(...)` in `adapters/__init__.py` |
+| `adapters/` | S03, S04, S06-S10 | Interfaces for parser / embedder / reranker / extractor / interpreter / verifier, the registry that builds them from the runtime config, no-op fakes, the embedding adapters `embedding_sentence_transformers.py` (any local model) and `embedding_openai.py` (any `/v1/embeddings` endpoint), and the reranker adapters `rerank_cross_encoder.py` (any CrossEncoder) and `rerank_http.py` (Cohere / Jina / vLLM `/rerank`). **The only place model-specific code may live.** | New backend: adapter class + `register_adapter(...)` in `adapters/__init__.py` |
 | `config/` | - | Runtime settings (`RuntimeConfig`): models, limits, parsing thresholds, storage. | `runtime.py` |
 | `artifacts/` | - | SHA-256 fingerprints and the on-disk store (parsed documents, raw parser output, manifests, original files). Keys include document hash + settings, so a changed input or setting never hits stale cache. | `store.py` |
 | `indexing/` | S04 | **`chunking_pipeline.py` is the whole chunking pipeline in one readable file** (numbered steps, each calling a helper). Helpers: `structure.py` heading hierarchy, `continuation.py` page-break joins, `units.py` / `search_text.py` search view with a map back to the source, `sizing.py` merge/cut rules, `passages.py`, `references.py`. `builder.py` = cache + indexes + coverage ledger. `report.py` = HTML view. | Chunking behaviour: `chunking_pipeline.py` and the helper it calls; sizes: runtime config |
 | `indexing/stores/` | S04 | Pluggable databases: `base.py` interfaces (`LexicalIndex`, `VectorStore`), `sqlite_fts5.py` (BM25), `numpy_store.py` (exact cosine). | New database: subclass + register in `stores/__init__.py` |
-| `pipeline/` | S05 | Wires stages in order. S01-S04 run for real (parse + index every document, cached); later stages are marked stubs in `run.py`. | `run.py` |
+| `retrieval/` | S06 | **`retrieval_pipeline.py` is the whole evidence-retrieval pipeline in one readable file** (queries -> candidates -> fusion -> rerank -> selection -> expansion -> packaging). Helpers: `queries.py`, `candidates.py`, `fusion.py`, `rerank.py`, `selection.py`, `definitions.py`, `expansion.py`, `packaging.py`; `report.py` prints a run's trace. | Retrieval behaviour: `retrieval_pipeline.py` and its helper; depth: `retrieval.profile(s)` in the runtime config |
+| `pipeline/` | all | **`extraction_pipeline.py` is the whole engine in one readable file**: S01-S13 as numbered calls, real or marked STUB. Each phase turns its STUB line into a call. | `extraction_pipeline.py` |
 | `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing (`parsing_eval.py`) and chunking (`indexing_eval.py`) quality. | `corpus.py` for the label format |
 | `cli.py` | - | The command line. |
 
@@ -225,6 +238,36 @@ Both are chosen in the runtime config, never in code (see `examples/runtime.exam
   register it in `indexing/stores/__init__.py`, select it by name. Vectors are cached separately,
   so changing only the database does not re-run the embedding model.
 
+### How evidence retrieval works (S06)
+
+Open `src/extractor/retrieval/retrieval_pipeline.py`: `gather_evidence` lists the steps in order.
+
+1. **Queries:** the task becomes keyword queries (BM25), natural-language queries (one extra per
+   allowed label for interpretation tasks), a reranker statement and qualifier keywords.
+2. **Candidates:** lexical (BM25), vector (embeddings) and structural (heading / table-header word
+   matches) lists, plus a qualifier pass (exceptions, conditions, amendments).
+3. **Fusion:** reciprocal rank fusion, never adding raw scores; provenance kept per passage.
+4. **Rerank:** a cross-encoder judges (task, passage) pairs. Documents of up to
+   `short_doc_passages` passages are reranked whole, so stage one cannot lose evidence.
+5. **Select:** adaptive cut at `score_drop_ratio` x the best score, near-duplicate removal (same
+   words AND same numbers, so "10%" vs "12%" clauses both survive), per-section and per-document
+   diversity, reserved slots for qualifier candidates.
+6. **Expand:** neighbours, the sections selected passages point at ("see Section 5.2"), and the
+   definitions of defined terms they use (`"Maturity Date" means ...`). Added passages are scored too;
+   strong ones are promoted to primary evidence.
+7. **Package:** source order, token budget, provisional roles (supports / qualifies / contextualizes);
+   whatever does not fit or cannot be resolved becomes an explicit **gap**.
+
+Retrieval never concludes anything. A weak result is low scores plus gaps, not `not_found`.
+`python -m extractor retrieve spec.yaml <task> --docs ...` prints all of this for one task.
+
+**Depth is a profile**, not code: `retrieval.profile` (or `--profile`) selects a bundle of
+`RetrievalSettings`: candidates per list, rerank pool, passages kept, score cutoff, token budget,
+neighbours, reference / definition / qualifier switches, short-document limit, per-source on/off.
+`light` is cheap and fast, `standard` the default, `deep` wide pools and two expansion rounds; define
+your own under `retrieval.profiles` (optionally `extends:` another one). These are runtime
+settings; they cannot appear in the task YAML.
+
 Image files (png, jpg, tiff) are treated as one OCR page. Other formats currently return an
 explicit `not_parsed` issue.
 
@@ -242,6 +285,10 @@ expected answers). Start from `evaluation/corpus/_template/` and read
   quotes sit inside ONE passage (chunk boundaries respecting the evidence), how many were cut
   across passages, how many are missing (a parsing problem), passage size stats and any
   structural-invariant violations.
+- `python -m extractor eval --retrieval [--profile light,standard,deep] [--variants ...]` reports,
+  per profile and ablation (full, stage_one, no_rerank, lexical_only, vector_only, no_structural,
+  no_qualifier, no_expansion): recall of your labeled evidence at the candidate, selected and package
+  level, recall of `contradicts` / `qualifies` evidence on its own, mean passages and tokens per task.
 - `python -m extractor eval --score` scores full engine output (meaningful after phase 5).
 
 ## 6. Rules of the codebase
@@ -249,6 +296,8 @@ expected answers). Start from `evaluation/corpus/_template/` and read
 - Adding a model or library = a new adapter/backend class + registration. Nothing else changes.
 - The YAML says *what*; `RuntimeConfig` says *which model / limits*. Never mix them.
 - Heavy libraries are imported only inside `parsing/backends/*`, the embedding adapters and the store modules, and load lazily.
-- The chunking pipeline stays readable top-to-bottom in one file; models and databases are never hard-coded in it.
+- Every pipeline is ONE readable `*_pipeline.py` file with numbered steps calling helpers in their own
+  modules (`chunking_pipeline.py`, `retrieval_pipeline.py`, and the whole engine in `extraction_pipeline.py`).
+  Models, databases and depth are never hard-coded in them.
 - Everything crossing a stage boundary is a type from `contracts/`.
 - Update ARCHITECTURE.md when a contract changes, and PROGRESS.md as phases complete.

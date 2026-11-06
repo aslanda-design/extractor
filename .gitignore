@@ -1,10 +1,63 @@
+# --- Python / environments ---------------------------------------------------------------
 .venv/
+venv/
+env/
 __pycache__/
+*.py[cod]
 *.egg-info/
+build/
+dist/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Engine output and caches (generated, can be large) ------------------------------------
+# .extractor_artifacts holds parsed documents, indexes, embeddings, downloaded models, reports and the UI workspace
 .extractor_artifacts/
+# throwaway experiments
+scratch*/
+*.sqlite
+*.npz
+
+# --- Your data: never commit documents or labeled cases ------------------------------------
+# (the corpus README and _template/ stay tracked; everything you add under these folders does not)
+evaluation/corpus/documents/*
+!evaluation/corpus/documents/.gitkeep
+evaluation/corpus/cases/*
+!evaluation/corpus/cases/.gitkeep
+evaluation/corpus/specs/*
+!evaluation/corpus/specs/.gitkeep
+# document and image files anywhere (uploads, test PDFs, scans); remove a line if you need a sample in the repo
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.docx
+*.xlsx
+
+# --- Secrets and local config ----------------------------------------------------------------
+.env
+.env.*
+*.key
+*.pem
+runtime.local.yaml
+.claude/settings.local.json
+
+# --- Editors, OS, tool indexes ----------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+node_modules/
+.codegraph/
+
+# --- Kept out of the repo by choice ------------------------------------------------------------
 PROGRESS.md
 tests/
 architecture.md
 docs/
-evaluation/

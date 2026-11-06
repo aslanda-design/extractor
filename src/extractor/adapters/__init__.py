@@ -6,6 +6,8 @@ from .registry import AdapterSet, build_adapters, register_adapter, registered_a
 from ..parsing.layered_parser import LayeredParser  # noqa: E402  (after .base to avoid a cycle)
 from .embedding_openai import OpenAICompatibleEmbedder
 from .embedding_sentence_transformers import SentenceTransformersEmbedder
+from .rerank_cross_encoder import CrossEncoderReranker
+from .rerank_http import HttpReranker
 
 register_adapter(Capability.PARSING, "fake", fakes.FakeParser)
 register_adapter(Capability.PARSING, "layered", LayeredParser)
@@ -13,6 +15,8 @@ register_adapter(Capability.EMBEDDING, "fake", fakes.FakeEmbedder)
 register_adapter(Capability.EMBEDDING, "sentence_transformers", SentenceTransformersEmbedder)
 register_adapter(Capability.EMBEDDING, "openai_compatible", OpenAICompatibleEmbedder)
 register_adapter(Capability.RERANKING, "fake", fakes.FakeReranker)
+register_adapter(Capability.RERANKING, "cross_encoder", CrossEncoderReranker)
+register_adapter(Capability.RERANKING, "http_rerank", HttpReranker)
 register_adapter(Capability.EXTRACTION, "fake", fakes.FakeExtractor)
 register_adapter(Capability.INTERPRETATION, "fake", fakes.FakeInterpreter)
 register_adapter(Capability.VERIFICATION, "fake", fakes.FakeVerifier)

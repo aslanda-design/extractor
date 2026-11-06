@@ -45,6 +45,16 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;max-height
 .grid input,.grid select{color:var(--text);width:100%}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px}
 @keyframes s{to{transform:rotate(360deg)}}
+.chip{display:inline-block;padding:0 7px;margin:1px 3px 1px 0;border-radius:4px;background:var(--bg);border:1px solid var(--line);font-size:11px;color:var(--muted)}
+.ev{border-left:4px solid var(--accent);background:var(--bg);border-radius:0 6px 6px 0;padding:8px 12px;margin:8px 0}
+.ev.qualifier{border-color:var(--warn)}.ev.context{border-color:var(--line)}
+.ev .meta{font-size:12px;color:var(--muted);margin-bottom:4px}
+.ev pre{margin:4px 0 0;max-height:none;white-space:pre-wrap;background:transparent;padding:0;font:13px/1.45 system-ui,sans-serif}
+.bar{display:inline-block;width:70px;height:8px;background:var(--line);border-radius:4px;vertical-align:middle;margin-right:4px}
+.bar>i{display:block;height:8px;background:var(--accent);border-radius:4px}
+.bar.budget{width:200px}.bar.budget>i.over{background:var(--bad)}
+tr.dim td{color:var(--muted)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:start}
 </style>
 </head>
 <body>
@@ -52,6 +62,7 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;max-height
   <h1>Extractor</h1>
   <nav id="nav">
     <button data-tab="docs" class="active">Documents</button>
+    <button data-tab="retr">Retrieval</button>
     <button data-tab="spec">Specification</button>
     <button data-tab="run">Run</button>
     <button data-tab="settings">Settings</button>
@@ -89,6 +100,31 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;max-height
     <div id="parseSummary"></div>
     <iframe id="reportFrame" hidden></iframe>
   </div>
+</section>
+
+<!-- ============ RETRIEVAL ============ -->
+<section id="retr">
+  <div class="card">
+    <h2>Find evidence</h2>
+    <p class="hint">Type what you want to find and see exactly which passages retrieval would hand to the extraction model as context, how they rank, and why each one is there (S06). Nothing is extracted or concluded here.</p>
+    <div class="row" id="retrDocs" style="margin-bottom:10px"></div>
+    <textarea id="retrText" style="min-height:70px;font:inherit" placeholder="e.g. When must the loan principal be repaid?"></textarea>
+    <div class="grid" style="margin:10px 0">
+      <label>Entity (optional)<input id="retrEntity" placeholder="e.g. the Borrower"></label>
+      <label>Time scope (optional)<input id="retrTime" placeholder="e.g. current, after the amendment"></label>
+      <label>Depth (profile)<select id="retrProfile"></select></label>
+    </div>
+    <details style="margin-bottom:10px"><summary>Allowed answers (optional, makes it an interpretation-style request)</summary>
+      <textarea id="retrLabels" style="min-height:70px;font:inherit" placeholder="one per line:  name: what it means&#10;approved: authorization granted without conditions&#10;rejected: authorization explicitly refused"></textarea></details>
+    <details style="margin-bottom:10px"><summary>Load a task from a specification</summary>
+      <div class="row" style="margin-top:8px"><select id="retrSpec"></select><select id="retrTask" class="grow"></select>
+        <button class="btn ghost" id="retrUse">Use this task</button></div></details>
+    <details style="margin-bottom:12px"><summary>Customize the profile for this query <span class="hint" id="retrChanged"></span></summary>
+      <p class="hint" style="margin-top:8px">Only the values you change are applied, for this query only. Save permanent profiles in the runtime config.</p>
+      <div class="grid" id="retrSettings"></div></details>
+    <div class="row"><button class="btn" id="retrBtn">Find evidence</button><span class="hint" id="retrHint" style="margin:0"></span></div>
+  </div>
+  <div id="retrOut"></div>
 </section>
 
 <!-- ============ SPECIFICATION ============ -->
@@ -173,7 +209,7 @@ $('#nav').onclick = e => {
   const tab = e.target.dataset.tab; if (!tab) return;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === e.target));
   document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === tab));
-  if (tab === 'run') loadRun(); if (tab === 'corpus') loadCorpus(); if (tab === 'settings') loadConfig();
+  if (tab === 'run') loadRun(); if (tab === 'corpus') loadCorpus(); if (tab === 'settings') loadConfig(); if (tab === 'retr') loadRetrieval();
 };
 
 /* ---------- documents ---------- */
@@ -375,6 +411,9 @@ async function loadConfig() {
   $('#idxForm').innerHTML =
     sel('cfgEmbName', 'embedding adapter', opts.embedding, cfg.models.embedding.name) +
     `<label>embedding params (JSON)<input id="cfgEmbParams" value="${esc(jsonText(cfg.models.embedding.params))}"><small>e.g. {"model": "Qwen/Qwen3-Embedding-0.6B", "device": "auto"}</small></label>` +
+    sel('cfgRerName', 'reranker adapter', opts.reranking, cfg.models.reranking.name) +
+    `<label>reranker params (JSON)<input id="cfgRerParams" value="${esc(jsonText(cfg.models.reranking.params))}"><small>e.g. {"model": "tomaarsen/Qwen3-Reranker-0.6B-seq-cls"}</small></label>` +
+    sel('cfgProfile', 'default retrieval profile', Object.keys(opts.retrieval.profiles), cfg.retrieval.profile) +
     sel('cfgLexName', 'lexical store', opts.stores.lexical, cfg.indexing.lexical_store.name) +
     `<label>lexical store params (JSON)<input id="cfgLexParams" value="${esc(jsonText(cfg.indexing.lexical_store.params))}"></label>` +
     sel('cfgVecName', 'vector store', opts.stores.vector, cfg.indexing.vector_store.name) +
@@ -405,6 +444,8 @@ $('#cfgSave').onclick = async () => {
   try {
     const parse = id => JSON.parse($(id).value || '{}');
     next.models.embedding = {name: $('#cfgEmbName').value, params: parse('#cfgEmbParams')};
+    next.models.reranking = {name: $('#cfgRerName').value, params: parse('#cfgRerParams')};
+    next.retrieval.profile = $('#cfgProfile').value;
     next.indexing.lexical_store = {name: $('#cfgLexName').value, params: parse('#cfgLexParams')};
     next.indexing.vector_store = {name: $('#cfgVecName').value, params: parse('#cfgVecParams')};
   } catch (e) { $('#cfgMsg').innerHTML = `<div class="msg bad">Params must be valid JSON: ${esc(e.message)}</div>`; return; }
@@ -452,6 +493,134 @@ $('#corpusIndex').onclick = async e => {
   } catch (err) { $('#corpusResult').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
   busy(e.target, false);
 };
+
+/* ---------- retrieval (S06) ---------- */
+let retrOpts = null, retrTasks = [];
+const SETTING_HELP = {
+  candidates_per_list: 'Candidates kept from each source (lexical / vector / structural)',
+  use_lexical: 'Search by words (BM25)', use_vector: 'Search by meaning (embeddings)',
+  use_structural: 'Match section titles and table headers', rrf_k: 'Rank fusion constant (higher = flatter)',
+  rerank: 'Re-judge candidates with the cross-encoder', rerank_top_n: 'Fused candidates sent to the reranker',
+  short_doc_passages: 'Documents with at most this many passages are reranked whole',
+  max_passages: 'Primary passages kept', min_passages: 'Always keep at least this many',
+  score_drop_ratio: 'Drop passages scoring below this share of the best one (0 = off)',
+  dedupe_similarity: 'Word overlap at which two passages count as duplicates (same numbers required)',
+  max_per_section: 'At most this many passages from one section',
+  qualifier_pass: 'Also look for exceptions, conditions and amendments', qualifier_slots: 'Extra passages reserved for them',
+  qualifier_candidates: 'Candidates examined by the qualifier pass', qualifier_keywords: 'Qualifier phrases (comma separated)',
+  neighbours: 'Passages added on each side of a selected one', expand_references: 'Add sections that selected passages point at',
+  max_reference_passages: 'Passages taken from each referenced section', expand_definitions: 'Add definitions of defined terms',
+  max_expansion_rounds: 'Times promoted passages are expanded again', promote_ratio: 'Added passage scoring this share of the best becomes primary',
+  budget_tokens: 'Evidence tokens handed to the extraction model',
+};
+async function loadRetrieval() {
+  retrOpts = (await api('/options')).retrieval;
+  const docs = (await api('/documents')).filter(d => d.parseable);
+  const prev = new Set([...document.querySelectorAll('#retrDocs input:checked')].map(i => i.value));
+  $('#retrDocs').innerHTML = docs.length
+    ? docs.map(d => `<label><input type="checkbox" value="${esc(d.name)}" ${prev.size && !prev.has(d.name) ? '' : 'checked'}> ${esc(d.name)}</label>`).join('')
+    : '<span class="hint">Upload documents in the Documents tab first.</span>';
+  const cur = $('#retrProfile').value || retrOpts.active;
+  $('#retrProfile').innerHTML = Object.keys(retrOpts.profiles).map(n => `<option ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  renderRetrSettings();
+  const specs = await api('/specs'); $('#retrSpec').innerHTML = specs.map(n => `<option>${esc(n)}</option>`).join('');
+  if (specs.length) loadRetrTasks();
+}
+function renderRetrSettings() {
+  const defaults = retrOpts.profiles[$('#retrProfile').value];
+  $('#retrSettings').innerHTML = Object.entries(defaults).map(([k, v]) => {
+    const common = `data-rs="${k}" data-def="${esc(JSON.stringify(v))}"`, help = `<small>${esc(SETTING_HELP[k] || '')}</small>`;
+    if (typeof v === 'boolean') return `<label>${k}<select ${common}><option value="true" ${v ? 'selected' : ''}>yes</option><option value="false" ${v ? '' : 'selected'}>no</option></select>${help}</label>`;
+    if (Array.isArray(v)) return `<label>${k}<input ${common} value="${esc(v.join(', '))}">${help}</label>`;
+    return `<label>${k}<input ${common} type="number" step="any" value="${v}">${help}</label>`;
+  }).join('');
+  countRetrChanges();
+}
+function retrOverrides() {
+  const out = {};
+  document.querySelectorAll('#retrSettings [data-rs]').forEach(el => {
+    const def = JSON.parse(el.dataset.def);
+    const v = typeof def === 'boolean' ? el.value === 'true' : Array.isArray(def) ? el.value.split(',').map(x => x.trim()).filter(Boolean) : Number(el.value);
+    if (JSON.stringify(v) !== JSON.stringify(def)) out[el.dataset.rs] = v;
+  });
+  return out;
+}
+function countRetrChanges() { const n = Object.keys(retrOverrides()).length; $('#retrChanged').textContent = n ? `(${n} changed)` : ''; }
+$('#retrProfile').onchange = renderRetrSettings;
+$('#retrSettings').oninput = countRetrChanges;
+async function loadRetrTasks() {
+  try { retrTasks = await api(`/specs/${encodeURIComponent($('#retrSpec').value)}/retrieval-tasks`); } catch (e) { retrTasks = []; }
+  $('#retrTask').innerHTML = retrTasks.map((t, i) => `<option value="${i}">${esc(t.label)} · ${esc(t.kind)}</option>`).join('');
+}
+$('#retrSpec').onchange = loadRetrTasks;
+$('#retrUse').onclick = () => {
+  const t = retrTasks[$('#retrTask').value]; if (!t) return;
+  $('#retrText').value = t.text; $('#retrEntity').value = t.entity || ''; $('#retrTime').value = t.time || '';
+  $('#retrLabels').value = t.labels.map(l => `${l.name}: ${l.meaning}`).join('\n');
+};
+function parseLabels() {
+  return $('#retrLabels').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const i = l.indexOf(':'); return i < 0 ? {name: l, meaning: l} : {name: l.slice(0, i).trim(), meaning: l.slice(i + 1).trim()};
+  });
+}
+$('#retrBtn').onclick = async e => {
+  const documents = [...document.querySelectorAll('#retrDocs input:checked')].map(i => i.value);
+  busy(e.target, true, 'Searching…'); $('#retrHint').textContent = 'the first run indexes the documents and loads the models; later runs are quick';
+  try {
+    const r = await api('/retrieve', json('POST', {documents, text: $('#retrText').value, entity: $('#retrEntity').value,
+      time: $('#retrTime').value, labels: parseLabels(), profile: $('#retrProfile').value, overrides: retrOverrides()}));
+    showEvidence(r);
+  } catch (err) { $('#retrOut').innerHTML = `<div class="card"><div class="msg bad">${esc(err.message)}</div></div>`; }
+  $('#retrHint').textContent = ''; busy(e.target, false);
+};
+$('#retrText').onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('#retrBtn').click(); };
+
+const ORIGIN_NOTE = {retrieved: 'ranked relevant', qualifier: 'qualifier pass: exception / condition / amendment', reference: 'section pointed at',
+  definition: 'defines a term', neighbour: 'adjacent passage'};
+const where = x => `${esc(x.document)} · p${x.pages.join(',') || '?'} · ${esc(x.heading_path.join(' › ') || 'no section')}`;
+const scoreBar = s => s == null ? '<span class="chip">no rerank</span>' : `<span class="bar"><i style="width:${Math.round(s * 100)}%"></i></span>${s.toFixed(3)}`;
+const chips = a => a.map(c => `<span class="chip">${esc(c)}</span>`).join('');
+const short = (t, n) => esc(t.slice(0, n)) + (t.length > n ? '…' : '');
+function showEvidence(r) {
+  const pct = Math.min(100, Math.round(100 * r.budget.used / r.budget.limit));
+  const exp = r.expansions.filter(x => x.included);
+  const card = x => `<div class="ev ${x.origin === 'qualifier' ? 'qualifier' : x.origin === 'retrieved' || x.role === 'supports' ? '' : 'context'}">
+      <div class="meta">${pill(x.origin, x.origin === 'retrieved' ? 'ok' : x.origin === 'qualifier' ? 'warn' : '')} ${pill(x.role, '')}
+        <code>${esc(x.short)}</code> · ${where(x)} · ${x.tokens} tokens ${x.kind === 'table' ? pill('table', 'warn') : ''}
+        · relevance ${scoreBar(x.score)}</div>
+      <div class="meta">${chips(x.provenance)} <span class="hint">${esc(ORIGIN_NOTE[x.origin])}</span></div>
+      <pre>${esc(x.text)}</pre></div>`;
+  $('#retrOut').innerHTML = `
+    <div class="card"><h2>Result</h2>
+      <p>Profile ${pill(r.profile, '')} · ${r.passages_in_scope} passage(s) in scope · ${r.seconds}s ·
+        ${r.short_document_mode ? pill('short document: every passage was reranked', 'ok') : pill('candidates from the indexes were reranked', '')}</p>
+      <p>Context size <span class="bar budget"><i class="${r.budget.used > r.budget.limit ? 'over' : ''}" style="width:${pct}%"></i></span> ${r.budget.used} / ${r.budget.limit} tokens · ${r.package.length} passage(s) in the context</p>
+      ${r.gaps.length ? r.gaps.map(g => `<div class="msg warn">Gap: ${esc(g)}</div>`).join('') : ''}</div>
+    <div class="card"><h2>Context that would be given (${r.package.length} passage(s), in document order)</h2>
+      <p class="hint">What the extraction model would read. Relevance is the reranker's judgement of the passage for your text, not a probability that it contains the answer.</p>
+      ${r.package.map(card).join('') || '<p class="hint">Nothing found in scope.</p>'}</div>
+    <div class="card"><h2>Ranking after reranking (${r.ranking.length})</h2>
+      <p class="hint">Best first. <b>Primary</b> = survived selection; <b>in context as …</b> = added later (qualifier pass or expansion); <b>left out</b> shows why. “Found by” shows each source list and the rank it gave the passage.</p>
+      <table><thead><tr><th>#</th><th>Relevance</th><th>Status</th><th>Found by</th><th>Passage</th></tr></thead><tbody>
+      ${r.ranking.map(x => `<tr class="${x.in_package ? '' : 'dim'}"><td>${x.rank}</td><td style="white-space:nowrap">${scoreBar(x.score)}</td>
+        <td>${x.selected ? pill('primary', 'ok') : x.in_package ? pill('in context as ' + x.package_origin, 'ok') : pill('left out', '')}
+          ${x.reason && !x.in_package ? `<br><small>${esc(x.reason)}</small>` : ''}</td><td>${chips(x.found_by)}</td>
+        <td><code>${esc(x.short)}</code> · ${where(x)}<br><small>${short(x.text, 220)}</small></td></tr>`).join('')}</tbody></table></div>
+    <div class="card"><h2>Expansion (${r.expansions.length})</h2>
+      <p class="hint">Context added around the primary passages: neighbours, referenced sections and definitions. Each was scored; “promoted” means it ranked high enough to count as primary evidence.</p>
+      ${r.expansions.length ? `<table><thead><tr><th>Kind</th><th>Why</th><th>Relevance</th><th>Passage</th><th></th></tr></thead><tbody>
+      ${r.expansions.map(x => `<tr class="${x.included ? '' : 'dim'}"><td>${pill(x.origin, '')}</td><td>of <code>${esc(x.from)}</code>${x.detail ? ' · ' + esc(x.detail) : ''}</td>
+        <td style="white-space:nowrap">${scoreBar(x.score)}</td><td><code>${esc(x.short)}</code> · ${where(x)}<br><small>${short(x.text, 160)}</small></td>
+        <td>${x.promoted ? pill('promoted', 'ok') : ''} ${x.included ? '' : pill('over budget', 'bad')}</td></tr>`).join('')}</tbody></table>` : '<p class="hint">None.</p>'}</div>
+    <div class="card"><details><summary><b>Candidates by source</b> (before fusion and reranking)</summary>
+      <div class="cols" style="margin-top:10px">${r.candidate_lists.map(l => `<div><h2>${esc(l.name)} <span class="hint">(${l.rows.length})</span></h2>
+        <table><tbody>${l.rows.slice(0, 15).map(x => `<tr><td>${x.rank}</td><td><code>${esc(x.short)}</code> · p${x.pages.join(',')}<br><small>${short(x.text, 110)}</small></td></tr>`).join('')}</tbody></table></div>`).join('')
+        || '<p class="hint">No candidate lists.</p>'}</div></details>
+      <details style="margin-top:10px"><summary><b>Queries used</b></summary>
+        ${Object.entries(r.queries).map(([k, v]) => v.length ? `<p><b>${esc(k)}</b></p>${v.map(q => `<pre>${esc(q)}</pre>`).join('')}` : '').join('')}</details>
+      <details style="margin-top:10px"><summary><b>Settings used</b> (profile + your changes)</summary><pre>${esc(JSON.stringify(r.settings, null, 2))}</pre></details></div>`;
+  $('#retrOut').scrollIntoView({behavior: 'smooth'});
+}
 
 /* ---------- init ---------- */
 loadDocs(); loadSpecs().then(names => names.length && openSpec(names.includes('example.yaml') ? 'example.yaml' : names[0]));

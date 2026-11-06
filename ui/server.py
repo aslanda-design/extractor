@@ -25,6 +25,16 @@ class RunBody(BaseModel):
     documents: list[str]
 
 
+class RetrieveBody(BaseModel):
+    documents: list[str]
+    text: str
+    entity: str | None = None
+    time: str | None = None
+    labels: list[dict] = []  # [{"name": ..., "meaning": ...}]: makes it an interpretation-style request
+    profile: str | None = None
+    overrides: dict = {}  # RetrievalSettings fields to change for this query only
+
+
 def create_app(workspace_dir: Path) -> FastAPI:
     ws = Workspace(workspace_dir)
     app = FastAPI(title="Extractor UI")
@@ -91,6 +101,15 @@ def create_app(workspace_dir: Path) -> FastAPI:
     @app.post("/api/specs")
     def save_spec(body: SpecBody):
         return {"name": ws.save_spec(body.name or "untitled", body.text)}
+
+    @app.get("/api/specs/{name}/retrieval-tasks")
+    def retrieval_tasks(name: str):  # tasks / record fields of a spec as ready-made retrieval queries
+        return ws.retrieval_tasks(name)
+
+    # --- evidence retrieval (S06) ---
+    @app.post("/api/retrieve")
+    def retrieve(body: RetrieveBody):  # sync: loads models on first use, runs in a worker thread
+        return ws.retrieve(body.documents, body.text, body.entity, body.time, body.labels, body.profile, body.overrides)
 
     # --- run ---
     @app.post("/api/run")

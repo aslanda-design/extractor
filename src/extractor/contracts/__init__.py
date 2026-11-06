@@ -27,7 +27,7 @@ from .common import (
 )
 from .coverage import CoverageEntry, CoverageLedger, CoverageState
 from .document import DocumentRepresentation, ParsingIssue, SourceBlock
-from .evidence import EvidenceItem, EvidencePackage
+from .evidence import EvidenceItem, EvidenceOrigin, EvidencePackage, EvidencePassage, RetrievalTrace
 from .manifest import DocumentEntry, DocumentManifest, DocumentRelationship, Scope
 from .passage import Continuation, IndexedDocument, Passage, PassageSegment, Reference
 from .record import FieldResult, Record
@@ -44,5 +44,5 @@ __all__ = [
     "FieldResult", "Record", "EvidenceLink", "ExecutionMetadata", "TaskResult",
     "CompiledSpecification", "SpecificationFile", "SpecIssue", "TaskSpecification",
     "ValidationFinding", "ValidationReport", "Continuation", "IndexedDocument", "Passage",
-    "PassageSegment", "Reference",
+    "PassageSegment", "Reference", "EvidenceOrigin", "EvidencePassage", "RetrievalTrace",
 ]

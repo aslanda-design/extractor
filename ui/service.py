@@ -20,7 +20,10 @@ from pydantic import ValidationError
 from extractor.adapters import Capability, build_adapters, registered_adapters
 from extractor.artifacts import ArtifactStore, fingerprint
 from extractor.config import RuntimeConfig
+from extractor.config.runtime import RetrievalSettings
+from extractor.contracts.common import TaskKind
 from extractor.contracts.specification import SpecificationFile
+from extractor.contracts.task import LabelSpec
 from extractor.evaluation import CorpusError, load_corpus
 from extractor.evaluation.indexing_eval import evaluate_indexing
 from extractor.evaluation.parsing_eval import evaluate_parsing
@@ -30,6 +33,8 @@ from extractor.indexing.stores import registered_stores
 from extractor.parsing.backends.pdfium_renderer import PdfiumRenderer
 from extractor.parsing.report import write_report
 from extractor.pipeline import index_documents, run_pipeline
+from extractor.retrieval.retrieval_pipeline import gather_evidence
+from extractor.retrieval.types import RetrievalRequest, RetrievalTools, request_from_field, request_from_task
 from extractor.scope import DocumentRequest, ManifestError, build_manifest
 from extractor.spec import SpecificationError, compile_specification, parse_specification
 
@@ -71,13 +76,18 @@ class Workspace:
         base = RuntimeConfig()
         models = base.models.model_copy(update={
             "parsing": base.models.parsing.model_copy(update={"name": "layered"}),
-            "embedding": base.models.embedding.model_copy(update={"name": "sentence_transformers"})})
+            "embedding": base.models.embedding.model_copy(update={"name": "sentence_transformers"}),
+            "reranking": base.models.reranking.model_copy(update={"name": "cross_encoder"})})
         return base.model_copy(update={"models": models})
 
-    @staticmethod
-    def options() -> dict:
-        """Names the Settings tab can offer (everything registered in the engine)."""
-        return {"embedding": registered_adapters(Capability.EMBEDDING), "stores": registered_stores()}
+    def options(self) -> dict:
+        """Names the UI can offer (everything registered in the engine) and the retrieval profiles."""
+        retrieval = self.get_config().retrieval
+        return {"embedding": registered_adapters(Capability.EMBEDDING),
+                "reranking": registered_adapters(Capability.RERANKING),
+                "stores": registered_stores(),
+                "retrieval": {"active": retrieval.profile,
+                              "profiles": {n: retrieval.resolve(n).model_dump(mode="json") for n in retrieval.names()}}}
 
     def _builder(self, config: RuntimeConfig) -> tuple:
         """IndexBuilder + adapters for this config, reused so the embedding model stays loaded."""
@@ -224,6 +234,105 @@ class Workspace:
             return [{"id": h.id, "score": round(h.score, 4), "heading_path": doc.passage(h.id).heading_path,
                      "pages": doc.passage(h.id).pages, "text": doc.passage(h.id).text} for h in hits]
         return {"query": query, "lexical": rows(lexical), "vector": rows(vector)}
+
+    # --- evidence retrieval (S06) -----------------------------------------------------
+
+    def retrieval_tasks(self, spec_name: str) -> list[dict]:
+        """Tasks (and record fields) of a spec that retrieval can serve, as ready-to-use queries."""
+        checked = self.validate_spec(self.get_spec(spec_name))
+        if not checked["ok"]:
+            raise UiError("the spec has errors; fix them in the Specification tab first")
+        spec = compile_specification(parse_specification(yaml.safe_load(self.get_spec(spec_name))))
+        items = []
+        for task in spec.tasks:
+            if task.kind == TaskKind.RECORDS:  # records are found over the whole scope; their FIELDS use retrieval
+                requests = [(f"{task.id} \u203a {f.id}", request_from_field(f, task)) for f in task.record.fields]
+            else:
+                requests = [(task.id, request_from_task(task))]
+            for label, r in requests:
+                items.append({"id": r.task_id, "label": label, "kind": r.kind.value, "text": r.description,
+                              "entity": r.entity, "time": r.time,
+                              "labels": [l.model_dump(mode="json") for l in r.labels]})
+        return items
+
+    def _retrieval_settings(self, config: RuntimeConfig, profile: str | None, overrides: dict | None) -> RetrievalSettings:
+        try:
+            base = config.retrieval.resolve(profile or None)
+            return RetrievalSettings.model_validate({**base.model_dump(), **(overrides or {})})
+        except ValidationError as exc:
+            raise UiError("; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())) from None
+        except ValueError as exc:
+            raise UiError(str(exc)) from None
+
+    def retrieve(self, documents: list[str], text: str, entity: str | None = None, time_scope: str | None = None,
+                 labels: list[dict] | None = None, profile: str | None = None, overrides: dict | None = None) -> dict:
+        """Run evidence retrieval for a free-text request and return every step for display."""
+        if not text.strip():
+            raise UiError("type what you want to find")
+        if not documents:
+            raise UiError("select at least one document")
+        paths = [self.document_path(d) for d in documents]
+        config = self.get_config()
+        settings = self._retrieval_settings(config, profile, overrides)
+        profile_name = profile or config.retrieval.profile
+        try:
+            allowed = [LabelSpec(name=l["name"], meaning=l.get("meaning") or l["name"]) for l in labels or [] if l.get("name")]
+            manifest = build_manifest(DocumentRequest.from_paths(paths), self.store)
+        except (ManifestError, ValidationError) as exc:
+            raise UiError(str(exc)) from None
+        by_name = {e.filename: e for e in manifest.documents}
+
+        started = time.time()
+        with self._lock:
+            builder, adapters = self._builder(config)
+            indexed = [builder.index(by_name[p.name], p) for p in paths]  # parse + chunk + embed, cached
+            tools = RetrievalTools(lexical=builder.lexical, vectors=builder.vectors,
+                                   embedder=adapters.embedder, reranker=adapters.reranker)
+            request = RetrievalRequest(
+                task_id="query", kind=TaskKind.INTERPRETATION if allowed else TaskKind.VALUE, description=text.strip(),
+                entity=(entity or "").strip() or None, time=(time_scope or "").strip() or None, labels=allowed)
+            package = gather_evidence(request, indexed, tools, settings, manifest=manifest, profile=profile_name)
+        return self._evidence_view(package, indexed, {e.document_id: e.filename for e in manifest.documents},
+                                   settings, round(time.time() - started, 1))
+
+    @staticmethod
+    def _evidence_view(package, indexed, filenames: dict, settings: RetrievalSettings, seconds: float) -> dict:
+        """Plain-JSON view of an EvidencePackage: each step of retrieval, ready to render."""
+        trace = package.trace
+        passages = {p.passage_id: p for d in indexed for p in d.passages}
+        found_by: dict[str, list[str]] = {}
+        for name, ids in trace.candidate_lists.items():
+            for rank, pid in enumerate(ids, start=1):
+                found_by.setdefault(pid, []).append(f"{name}:{rank}")
+
+        def view(pid: str) -> dict:
+            p = passages[pid]
+            return {"id": pid, "short": pid.rsplit(":", 1)[-1], "document": filenames.get(p.document_id, p.document_id),
+                    "pages": p.pages, "heading_path": p.heading_path, "tokens": p.token_count, "text": p.text,
+                    "kind": p.kind.value}
+
+        in_package = {p.passage_id: p.origin.value for p in package.passages}
+        everywhere = ["all (short document)"] if trace.short_document_mode else []
+        return {
+            "profile": trace.profile, "seconds": seconds, "settings": settings.model_dump(mode="json"),
+            "short_document_mode": trace.short_document_mode,
+            "budget": {"used": trace.used_tokens, "limit": trace.budget_tokens},
+            "passages_in_scope": len(passages),
+            "queries": trace.queries,
+            "candidate_lists": [{"name": n, "rows": [{**view(pid), "rank": i} for i, pid in enumerate(ids, start=1)]}
+                                for n, ids in trace.candidate_lists.items()],
+            "fused_count": len(trace.fused),
+            "ranking": [{**view(pid), "rank": i, "score": score, "selected": pid in trace.selected,
+                         "in_package": pid in in_package, "package_origin": in_package.get(pid),
+                         "reason": trace.not_selected.get(pid), "found_by": found_by.get(pid, everywhere)}
+                        for i, (pid, score) in enumerate(trace.reranked, start=1)],
+            "package": [{**view(p.passage_id), "origin": p.origin.value, "role": p.role.value,
+                         "provenance": p.provenance, "score": p.rerank_score} for p in package.passages],
+            "expansions": [{**view(x.passage_id), "origin": x.origin.value, "from": x.from_passage_id.rsplit(":", 1)[-1],
+                            "detail": x.detail, "score": x.rerank_score, "promoted": x.promoted, "included": x.included}
+                           for x in trace.expansions],
+            "gaps": package.gaps,
+        }
 
     # --- specifications ---------------------------------------------------------
 

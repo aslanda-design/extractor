@@ -4,6 +4,7 @@
     manifest  hash documents and show the S01 manifest
     parse     parse one document (S03) and write JSON + an HTML inspection report
     index     chunk + index one document (S04); print sections/passages, write an HTML view
+    retrieve  show every step of evidence retrieval (S06) for one task
     run       run the pipeline (stubs for stages not implemented yet)
     eval      validate the evaluation corpus and (optionally) score the engine
 """
@@ -16,7 +17,7 @@ from .adapters import build_adapters
 from .artifacts import ArtifactStore
 from .config import RuntimeConfig, load_runtime_config
 from .evaluation import CorpusError, load_corpus, run_corpus
-from .pipeline import run_files
+from .pipeline import index_documents, run_files
 from .scope import (
     DocumentRequest,
     ManifestError,
@@ -57,13 +58,14 @@ def _real_config(path: Path | None) -> RuntimeConfig:
     """Runtime config for commands that need the real stack.
 
     With a config file, it is used as-is. Without one: layered parser +
-    sentence-transformers embeddings (default model), instead of the fakes.
+    sentence-transformers embeddings and cross-encoder reranker (default models), instead of the fakes.
     """
     config = load_runtime_config(path)
     if path is None:
         models = config.models.model_copy(update={
             "parsing": config.models.parsing.model_copy(update={"name": "layered"}),
-            "embedding": config.models.embedding.model_copy(update={"name": "sentence_transformers"})})
+            "embedding": config.models.embedding.model_copy(update={"name": "sentence_transformers"}),
+            "reranking": config.models.reranking.model_copy(update={"name": "cross_encoder"})})
         config = config.model_copy(update={"models": models})
     return config
 
@@ -125,9 +127,40 @@ def cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_retrieve(args: argparse.Namespace) -> int:
+    from .retrieval.report import format_package
+    from .retrieval.retrieval_pipeline import gather_evidence
+    from .retrieval.tools import build_retrieval_tools
+    from .retrieval.types import request_from_task
+    from .scope import resolve_task_documents
+
+    config = _real_config(args.config)
+    store = ArtifactStore(config.storage.artifact_dir)
+    manifest = build_manifest(_request(args), store)
+    spec = compile_specification_file(args.spec)
+    task = spec.task(args.task)
+    adapters = build_adapters(config, store)
+    indexed = index_documents(manifest, adapters, config, store)
+    document_ids = resolve_task_documents(task, manifest)
+    profile = args.profile or config.retrieval.profile
+    package = gather_evidence(
+        request_from_task(task, document_ids), [indexed[d] for d in document_ids], build_retrieval_tools(config, adapters, store),
+        config.retrieval.resolve(profile), manifest=manifest, profile=profile)
+
+    texts = {p.passage_id: (p.heading_path, p.text) for d in indexed.values() for p in d.passages}
+    print(format_package(package, texts))
+    out_dir = args.out or Path(config.storage.artifact_dir) / "reports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{task.id}.evidence.json"
+    out.write_text(package.model_dump_json(indent=2), encoding="utf-8")
+    print()
+    print(f"json: {out}")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     config = _real_config(args.config)
-    results = run_files(args.spec, _request(args), config)
+    results = run_files(args.spec, _request(args), config, args.profile)
     print("[" + ",\n".join(r.model_dump_json(indent=2) for r in results) + "]")
     return 0
 
@@ -154,6 +187,20 @@ def cmd_eval(args: argparse.Namespace) -> int:
         metrics = evaluate_indexing(corpus, IndexBuilder(config, build_adapters(config, store), store))
         print(metrics.model_dump_json(indent=2))
         print(f"quote containment (single passage): {metrics.containment}")
+    if args.retrieval and corpus.cases:
+        from .evaluation.retrieval_eval import VARIANTS, evaluate_retrieval
+
+        config = _real_config(args.config)
+        store = ArtifactStore(config.storage.artifact_dir)
+        profiles = args.profile.split(",") if args.profile else [config.retrieval.profile]
+        variants = args.variants.split(",") if args.variants else None
+        unknown = [v for v in variants or [] if v not in VARIANTS]
+        if unknown:
+            raise CorpusError(f"unknown variant(s) {unknown}; available: {list(VARIANTS)}")
+        report = evaluate_retrieval(corpus, config, build_adapters(config, store), store, profiles, variants)
+        print(report.format())
+        print("cand% = gold passage reached the reranker, sel% = survived selection, pkg% = in the final package, "
+              "exc% = same for contradicting/qualifying evidence")
     if args.score and corpus.cases:
         report = run_corpus(corpus, load_runtime_config(args.config))
         print(f"status accuracy: {report.status_accuracy:.0%}  value accuracy: {report.value_accuracy}")
@@ -178,6 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--docs", nargs="*", help="document files")
         p.add_argument("--request", type=Path, help="request YAML (documents, relationships, ...)")
         p.add_argument("--config", type=Path, help="runtime config YAML")
+        if name == "run":
+            p.add_argument("--profile", help="retrieval depth: light | standard | deep | one of your own")
         p.set_defaults(func=func)
 
     p = sub.add_parser("parse", help="parse one document and write an inspection report")
@@ -193,11 +242,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", type=Path, help="runtime config YAML (default: real parser + default embedding model)")
     p.set_defaults(func=cmd_index)
 
+    p = sub.add_parser("retrieve", help="show every step of evidence retrieval for one task")
+    p.add_argument("spec", type=Path)
+    p.add_argument("task", help="task id in the spec (value or interpretation task)")
+    p.add_argument("--docs", nargs="*", help="document files")
+    p.add_argument("--request", type=Path, help="request YAML (documents, relationships, ...)")
+    p.add_argument("--profile", help="retrieval depth: light | standard | deep | one of your own")
+    p.add_argument("--out", type=Path, help="output folder (default: <artifact_dir>/reports)")
+    p.add_argument("--config", type=Path, help="runtime config YAML")
+    p.set_defaults(func=cmd_retrieve)
+
     p = sub.add_parser("eval", help="validate (and score) the evaluation corpus")
     p.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     p.add_argument("--score", action="store_true", help="also run the engine and score it")
     p.add_argument("--parsing", action="store_true", help="measure parsing quality on the corpus documents")
     p.add_argument("--indexing", action="store_true", help="measure chunk/quote containment on the corpus documents")
+    p.add_argument("--retrieval", action="store_true", help="measure evidence recall of retrieval, with ablations")
+    p.add_argument("--profile", help="retrieval profile(s) to evaluate, comma separated (e.g. light,standard,deep)")
+    p.add_argument("--variants", help="comma separated ablations (default: all): full,stage_one,no_rerank,...")
     p.add_argument("--config", type=Path, help="runtime config YAML")
     p.set_defaults(func=cmd_eval)
     return parser

@@ -7,7 +7,7 @@ Everything here can change without touching a task's meaning.
 from pathlib import Path
 
 import yaml
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ..artifacts.fingerprint import fingerprint
 from ..contracts.common import StrictModel
@@ -82,16 +82,112 @@ class IndexingConfig(StrictModel):
     vector_store: StoreSelection = StoreSelection(name="numpy")
 
 
+class RetrievalSettings(StrictModel):
+    """S06 knobs for ONE depth of extraction. Pick a whole set by profile name (see RetrievalConfig)."""
+
+    # --- candidate sources (step 2) -------------------------------------------------
+    candidates_per_list: int = Field(default=30, ge=1)  # kept from each of lexical / vector / structural
+    use_lexical: bool = True
+    use_vector: bool = True
+    use_structural: bool = True  # heading and table-header matches
+    # --- fusion + rerank (steps 3-4) --------------------------------------------------
+    rrf_k: int = Field(default=60, ge=1)  # reciprocal rank fusion constant
+    rerank: bool = True  # False = keep the fused order
+    rerank_top_n: int = Field(default=30, ge=1)  # fused candidates sent to the reranker
+    short_doc_passages: int = Field(default=64, ge=0)  # documents this small: rerank ALL passages
+    # --- selection (step 5) -------------------------------------------------------------
+    max_passages: int = Field(default=8, ge=1)  # primary passages kept
+    min_passages: int = Field(default=1, ge=1)
+    score_drop_ratio: float = Field(default=0.3, ge=0, le=1)  # drop passages scoring < ratio * best (0 = off)
+    dedupe_similarity: float = Field(default=0.85, ge=0, le=1)  # word-shingle overlap that counts as a duplicate
+    max_per_section: int = Field(default=3, ge=1)
+    # --- qualifiers / contradictions ------------------------------------------------------
+    qualifier_pass: bool = True
+    qualifier_slots: int = Field(default=2, ge=0)  # extra passages reserved for qualifier candidates
+    qualifier_candidates: int = Field(default=10, ge=1)
+    qualifier_keywords: list[str] = [
+        "except", "unless", "subject to", "notwithstanding", "provided that", "provided, however",
+        "amended", "amendment", "supersede", "superseded", "replaced", "in lieu of", "waive", "waived",
+        "condition", "conditional", "on the condition",
+    ]
+    # --- expansion (step 6) ------------------------------------------------------------------
+    neighbours: int = Field(default=1, ge=0)  # passages added on each side of a selected one
+    expand_references: bool = True  # sections that selected passages point at ("see Section 5.2")
+    max_reference_passages: int = Field(default=2, ge=1)
+    expand_definitions: bool = True  # definitions of defined terms used by selected passages
+    max_expansion_rounds: int = Field(default=1, ge=0)  # promoted passages are expanded again
+    promote_ratio: float = Field(default=0.6, ge=0, le=1)  # expansion passage scoring >= ratio * best becomes primary
+    # --- packaging (step 7) -----------------------------------------------------------------------
+    budget_tokens: int = Field(default=4000, ge=1)  # evidence tokens per task (a real model may lower it)
+
+
+BUILTIN_PROFILES: dict[str, dict] = {
+    # cheap and fast: few candidates, no expansion, no qualifier pass
+    "light": {
+        "candidates_per_list": 15, "rerank_top_n": 15, "max_passages": 4, "budget_tokens": 2000,
+        "neighbours": 0, "expand_references": False, "expand_definitions": False,
+        "qualifier_pass": False, "short_doc_passages": 24,
+    },
+    "standard": {},
+    # thorough: wide candidate pools, more evidence, two expansion rounds
+    "deep": {
+        "candidates_per_list": 60, "rerank_top_n": 60, "max_passages": 15, "budget_tokens": 8000,
+        "score_drop_ratio": 0.2, "max_per_section": 5, "qualifier_slots": 3, "qualifier_candidates": 20,
+        "neighbours": 2, "max_reference_passages": 3, "max_expansion_rounds": 2, "short_doc_passages": 128,
+    },
+}
+
+
+class RetrievalConfig(StrictModel):
+    """Which retrieval depth to use, and the named depths available.
+
+        retrieval:
+          profile: standard                 # or light / deep / your own
+          profiles:
+            thorough_legal:                 # a custom profile
+              extends: deep                 # start from another profile (default: standard)
+              budget_tokens: 12000
+            light: {max_passages: 3}        # tweaking a built-in one
+    """
+
+    profile: str = "standard"
+    profiles: dict[str, dict] = {}
+
+    def names(self) -> list[str]:
+        return sorted(set(BUILTIN_PROFILES) | set(self.profiles))
+
+    def resolve(self, name: str | None = None) -> RetrievalSettings:
+        return RetrievalSettings.model_validate(self._definition(name or self.profile, ()))
+
+    def _definition(self, name: str, seen: tuple[str, ...]) -> dict:
+        if name in seen:
+            raise ValueError(f"retrieval profile cycle: {' -> '.join(seen + (name,))}")
+        if name not in BUILTIN_PROFILES and name not in self.profiles:
+            raise ValueError(f"unknown retrieval profile '{name}' (available: {self.names()})")
+        own = {**BUILTIN_PROFILES.get(name, {}), **self.profiles.get(name, {})}
+        parent = own.pop("extends", None if name == "standard" else "standard")
+        base = self._definition(parent, seen + (name,)) if parent else {}
+        return {**base, **own}
+
+    @model_validator(mode="after")
+    def _validate_profiles(self):
+        for name in {*self.names(), self.profile}:  # fail at config load, not in the middle of a run
+            self.resolve(name)
+        return self
+
+
 class RuntimeConfig(StrictModel):
     models: ModelsConfig = ModelsConfig()
     execution: ExecutionConfig = ExecutionConfig()
     parsing: ParsingConfig = ParsingConfig()
     indexing: IndexingConfig = IndexingConfig()
+    retrieval: RetrievalConfig = RetrievalConfig()
     storage: StorageConfig = StorageConfig()
 
     def fingerprint(self) -> str:
         """Identity of the settings that can change results (storage path excluded)."""
-        return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking)
+        return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking,
+                           self.retrieval.resolve())
 
     def parsing_fingerprint(self) -> str:
         """Cache key part for parsed documents: only parser choice + parsing settings."""

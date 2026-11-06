@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## State of the repo
 
-`ARCHITECTURE.md` (v1.0) is the agreed design for a general document extraction engine (YAML spec in, structured results with evidence and explicit uncertainty out). Implementation proceeds in phases (0 foundations, 1 scope + YAML compiler, 2 parsing, 3 indexing, 4 retrieval, 5 value, 6 validation, 7 interpretation, 8 records, 9 orchestrator/recovery, 10 results, 11 hardening). Phases 0 and 1 are done; phases 2 (S03 parsing, `parsing/`) and 3 (S04 chunking + indexes, `indexing/`) are implemented and await measurement on the user's real corpus; `pipeline/run.py` parses and indexes every document, then later stages are stubs that return `failed`. Progress and per-phase definitions live in `PROGRESS.md` (gitignored).
+`ARCHITECTURE.md` (v1.0) is the agreed design for a general document extraction engine (YAML spec in, structured results with evidence and explicit uncertainty out). Implementation proceeds in phases (0 foundations, 1 scope + YAML compiler, 2 parsing, 3 indexing, 4 retrieval, 5 value, 6 validation, 7 interpretation, 8 records, 9 orchestrator/recovery, 10 results, 11 hardening). Phases 0 and 1 are done; phases 2 (S03 parsing, `parsing/`) and 3 (S04 chunking + indexes, `indexing/`) are implemented and await measurement on the user's real corpus; phase 4 (S06 evidence retrieval, `retrieval/`) is implemented too; `pipeline/extraction_pipeline.py` (the whole engine in one file) parses, indexes and retrieves evidence, then the extraction stages are stubs that return `failed`. Progress and per-phase definitions live in `PROGRESS.md` (gitignored).
 
 `README.md` maps each stage to its folder under `src/extractor/`. Keep that map and the "one concern per folder" layout when adding phases; every module docstring names its stage.
 
@@ -16,7 +16,7 @@ Python venv is `.venv` (Windows: `.venv\Scripts\python`).
 - Tests: `python -m pytest` (single test: `python -m pytest tests/test_spec.py::test_dependency_cycle`); real-backend parsing tests: `python -m pytest -m integration`
 - Parsing needs Java on PATH, CUDA PyTorch and `pip install -e ".[parsing,indexing]"` (see README); parsing libraries are imported only inside `parsing/backends/*`.
 - UI: `ui\launch.bat` or `python ui/run.py` (separate top-level `ui/` folder; deps in `ui/requirements.txt`; it must only use the engine's public modules, never the other way round)
-- CLI: `python -m extractor compile|manifest|parse|index|run|eval` (see README.md)
+- CLI: `python -m extractor compile|manifest|parse|index|retrieve|run|eval` (see README.md)
 - Human-labeled evaluation data goes in `evaluation/corpus/` (user-supplied; see its README).
 
 Read `ARCHITECTURE.md` before implementing anything. Treat its decisions (Section 2) and stage contracts (S01–S13, Section 6) as constraints, and update it whenever a contract changes.
@@ -33,7 +33,7 @@ A phase is not done until its UI part exists.
 
 ## Constraints that are easy to violate
 
-- The whole chunking pipeline must stay readable top-to-bottom in `indexing/chunking_pipeline.py` (steps call helpers in their own modules). Embedding model and vector/lexical databases are pluggable through the runtime config and registries; never hard-code a model or database in the pipeline.
+- Every pipeline is ONE readable `*_pipeline.py` file with numbered steps calling helpers in their own modules: `indexing/chunking_pipeline.py`, `retrieval/retrieval_pipeline.py`, and the whole engine in `pipeline/extraction_pipeline.py` (S01-S13, STUB lines until built). New pipelines follow the same layout. Models, databases and retrieval depth (`retrieval.profile`) are pluggable through the runtime config; never hard-code them in a pipeline.
 
 - Python package with a deterministic orchestrator. Models only do bounded tasks, and all vendor/model-specific behavior stays inside adapters (parsing, embedding, reranking, extraction, interpretation, verification).
 - YAML describes *what* to extract; runtime config describes *which models/settings*. Never mix them.
