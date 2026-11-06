@@ -5,3 +5,6 @@ __pycache__/
 .extractor_artifacts/
 PROGRESS.md
 tests/
+architecture.md
+docs/
+evaluation/

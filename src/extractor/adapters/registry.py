@@ -7,9 +7,11 @@ from the module that defines it, and import that module in `adapters/__init__.py
 from dataclasses import dataclass
 from typing import Callable
 
+from ..artifacts.store import ArtifactStore
 from ..config.runtime import RuntimeConfig
 from .base import (
     Adapter,
+    AdapterContext,
     Capability,
     EmbedderAdapter,
     ExtractorAdapter,
@@ -19,7 +21,7 @@ from .base import (
     VerifierAdapter,
 )
 
-AdapterFactory = Callable[..., Adapter]
+AdapterFactory = Callable[..., Adapter]  # called as factory(context, **params)
 _REGISTRY: dict[tuple[Capability, str], AdapterFactory] = {}
 
 
@@ -52,7 +54,7 @@ class AdapterSet:
         return {cap.value: a.identity.label() for cap, a in self.all().items()}
 
 
-def _build(capability: Capability, config: RuntimeConfig) -> Adapter:
+def _build(capability: Capability, config: RuntimeConfig, context: AdapterContext) -> Adapter:
     selection = getattr(config.models, capability.value)
     try:
         factory = _REGISTRY[(capability, selection.name)]
@@ -61,15 +63,16 @@ def _build(capability: Capability, config: RuntimeConfig) -> Adapter:
         raise ValueError(
             f"no {capability.value} adapter named '{selection.name}' (registered: {known})"
         ) from None
-    return factory(**selection.params)
+    return factory(context, **selection.params)
 
 
-def build_adapters(config: RuntimeConfig) -> AdapterSet:
+def build_adapters(config: RuntimeConfig, store: ArtifactStore | None = None) -> AdapterSet:
+    context = AdapterContext(parsing=config.parsing, store=store)
     return AdapterSet(
-        parser=_build(Capability.PARSING, config),
-        embedder=_build(Capability.EMBEDDING, config),
-        reranker=_build(Capability.RERANKING, config),
-        extractor=_build(Capability.EXTRACTION, config),
-        interpreter=_build(Capability.INTERPRETATION, config),
-        verifier=_build(Capability.VERIFICATION, config),
+        parser=_build(Capability.PARSING, config, context),
+        embedder=_build(Capability.EMBEDDING, config, context),
+        reranker=_build(Capability.RERANKING, config, context),
+        extractor=_build(Capability.EXTRACTION, config, context),
+        interpreter=_build(Capability.INTERPRETATION, config, context),
+        verifier=_build(Capability.VERIFICATION, config, context),
     )

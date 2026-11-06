@@ -82,4 +82,4 @@ def run_files(
     store = ArtifactStore(config.storage.artifact_dir)
     spec = compile_specification_file(spec_path)
     manifest = build_manifest(request, store)
-    return run_pipeline(spec, manifest, build_adapters(config), config)
+    return run_pipeline(spec, manifest, build_adapters(config, store), config)

@@ -37,14 +37,39 @@ class StorageConfig(StrictModel):
     artifact_dir: Path = Path(".extractor_artifacts")
 
 
+class ParsingConfig(StrictModel):
+    """Stage S03 tuning. Thresholds are meant to be adjusted against your scans."""
+
+    # --- routing: a page goes to OCR when ANY of these holds -----------------
+    min_native_chars: int = Field(default=30, ge=0)  # fewer characters => no usable text layer
+    max_garbage_ratio: float = Field(default=0.03, ge=0, le=1)  # U+FFFD / private-use / control
+    scan_image_coverage: float = Field(default=0.6, ge=0, le=1)  # page mostly one big image...
+    scan_max_chars: int = Field(default=150, ge=0)  # ...with little text on top of it
+    # --- region fallback inside a native page --------------------------------
+    region_min_image_area: float = Field(default=0.05, ge=0, le=1)  # image share of page worth OCR-ing
+    region_text_overlap: float = Field(default=0.3, ge=0, le=1)  # image already covered by text above this
+    # --- issue detection -----------------------------------------------------
+    max_order_jump_ratio: float = Field(default=0.3, ge=0, le=1)  # share of blocks out of reading order
+    # --- OCR retry ladder ----------------------------------------------------
+    ocr_dpi: int = Field(default=200, ge=72)
+    ocr_hires_dpi: int = Field(default=300, ge=72)
+    # --- pipeline ------------------------------------------------------------
+    use_cache: bool = True
+
+
 class RuntimeConfig(StrictModel):
     models: ModelsConfig = ModelsConfig()
     execution: ExecutionConfig = ExecutionConfig()
+    parsing: ParsingConfig = ParsingConfig()
     storage: StorageConfig = StorageConfig()
 
     def fingerprint(self) -> str:
         """Identity of the settings that can change results (storage path excluded)."""
-        return fingerprint(self.models, self.execution)
+        return fingerprint(self.models, self.execution, self.parsing)
+
+    def parsing_fingerprint(self) -> str:
+        """Cache key part for parsed documents: only parser choice + parsing settings."""
+        return fingerprint(self.models.parsing, self.parsing)
 
 
 def load_runtime_config(path: Path | None) -> RuntimeConfig:

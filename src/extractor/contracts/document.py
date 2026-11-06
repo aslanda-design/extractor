@@ -17,16 +17,33 @@ class BlockKind(StrEnum):
     OTHER = "other"
 
 
+class PageInfo(StrictModel):
+    """Geometry and provenance of one page.
+
+    Coordinates everywhere are PDF points (1/72 inch) with the origin at the
+    TOP-LEFT of the page, y growing downward, so a bbox can be drawn on a
+    rendered page image with a single scale factor.
+    """
+
+    page: int  # 1-based
+    width: float
+    height: float
+    route: str = "native"  # "native" or "ocr": how the text of this page was obtained
+    route_reason: str = ""  # which signals triggered the choice
+
+
 class SourceBlock(StrictModel):
-    block_id: str  # stable, referenced by all evidence
+    block_id: str  # "{document_id}:p{page}:b{n}", n = reading order on the page
     document_id: str
     kind: BlockKind
     text: str
     page: int | None = None
-    bbox: tuple[float, float, float, float] | None = None
-    heading_path: list[str] = []
-    parent_id: str | None = None
+    bbox: tuple[float, float, float, float] | None = None  # (left, top, right, bottom), see PageInfo
+    heading_level: int | None = None  # for headings; hierarchy is built in phase 3
+    heading_path: list[str] = []  # filled by phase 3
+    parent_id: str | None = None  # filled by phase 3
     from_ocr: bool = False
+    parser_id: str | None = None  # id of the element in the raw parser output
 
 
 class TableCell(StrictModel):
@@ -55,12 +72,16 @@ class ParsingIssue(StrictModel):
     kind: IssueKind
     document_id: str
     page: int | None = None
+    bbox: tuple[float, float, float, float] | None = None  # region, when known
     message: str
+    attempts: list[str] = []  # retry ladder steps tried, e.g. ["native", "ocr", "ocr_hires"]
     resolved: bool = False  # unresolved issues become coverage limitations
 
 
 class DocumentRepresentation(StrictModel):
     document_id: str
+    pages: list[PageInfo] = []
+    raw_artifact: str | None = None  # artifact-store key of the raw parser output
     blocks: list[SourceBlock] = []
     tables: list[SourceTable] = []
     issues: list[ParsingIssue] = []

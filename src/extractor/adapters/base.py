@@ -7,10 +7,13 @@ Model-specific templates, tokenization and response envelopes stay inside it.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Sequence
 
+from ..artifacts.store import ArtifactStore
+from ..config.runtime import ParsingConfig
 from ..contracts.candidate import Candidate, InterpretationProposal
 from ..contracts.common import StrictModel
 from ..contracts.document import DocumentRepresentation
@@ -47,10 +50,21 @@ class AdapterCapabilities(StrictModel):
     supports_batching: bool = False
 
 
+@dataclass(frozen=True)
+class AdapterContext:
+    """Shared runtime objects every adapter receives when it is built."""
+
+    parsing: ParsingConfig = field(default_factory=ParsingConfig)
+    store: ArtifactStore | None = None
+
+
 class Adapter(ABC):
     """Common surface of every adapter."""
 
     capability: Capability
+
+    def __init__(self, context: AdapterContext | None = None):
+        self.context = context or AdapterContext()
 
     @property
     @abstractmethod

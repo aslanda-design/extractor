@@ -3,8 +3,10 @@
 from . import fakes
 from .base import Capability
 from .registry import AdapterSet, build_adapters, register_adapter
+from ..parsing.layered_parser import LayeredParser  # noqa: E402  (after .base to avoid a cycle)
 
 register_adapter(Capability.PARSING, "fake", fakes.FakeParser)
+register_adapter(Capability.PARSING, "layered", LayeredParser)
 register_adapter(Capability.EMBEDDING, "fake", fakes.FakeEmbedder)
 register_adapter(Capability.RERANKING, "fake", fakes.FakeReranker)
 register_adapter(Capability.EXTRACTION, "fake", fakes.FakeExtractor)

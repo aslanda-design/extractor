@@ -10,7 +10,10 @@ requires-python = ">=3.11"
 dependencies = ["pydantic>=2.6", "pyyaml>=6.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# Real parser backends. Install CUDA PyTorch first:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+parsing = ["opendataloader-pdf", "docling", "pypdfium2", "pillow"]
+dev = ["pytest>=8", "fpdf2", "numpy"]
 
 [project.scripts]
 extractor = "extractor.cli:main"
@@ -20,4 +23,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
+addopts = "-m 'not integration'"
+markers = ["integration: slow tests using the real parsing backends (run with -m integration)"]
