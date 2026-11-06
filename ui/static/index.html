@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Extractor</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#18181b;--muted:#6b7280;--line:#e4e4e7;--accent:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--okbg:#dcfce7;--warnbg:#fef3c7;--badbg:#fee2e2}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--text:#e5e7eb;--muted:#9ca3af;--line:#2a2f38;--accent:#60a5fa;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--okbg:#14301f;--warnbg:#3a2d0c;--badbg:#3b1717}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--text)}
+header{display:flex;align-items:center;gap:24px;padding:0 20px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0;padding:14px 0}
+nav{display:flex;gap:4px}
+nav button{background:none;border:0;border-bottom:2px solid transparent;padding:16px 12px;font:inherit;color:var(--muted);cursor:pointer}
+nav button.active{color:var(--text);border-color:var(--accent)}
+main{max-width:1100px;margin:0 auto;padding:20px}
+section{display:none}section.active{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px}
+h2{font-size:15px;margin:0 0 10px}
+p.hint{color:var(--muted);margin:0 0 12px}
+button.btn,select,input,textarea{font:inherit;color:inherit}
+.btn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer}
+.btn.ghost{background:none;color:var(--accent);border:1px solid var(--line)}
+.btn.danger{background:none;color:var(--bad);border:1px solid var(--line)}
+.btn:disabled{opacity:.5;cursor:wait}
+input,select,textarea{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+textarea{width:100%;min-height:380px;font:12.5px/1.5 ui-monospace,Consolas,monospace;tab-size:2}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:28px;text-align:center;color:var(--muted);cursor:pointer}
+.drop.over{border-color:var(--accent);color:var(--accent)}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px}
+.pill.ok{background:var(--okbg);color:var(--ok)}.pill.warn{background:var(--warnbg);color:var(--warn)}.pill.bad{background:var(--badbg);color:var(--bad)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.grow{flex:1}
+.msg{padding:8px 12px;border-radius:6px;margin:8px 0}
+.msg.bad{background:var(--badbg);color:var(--bad)}.msg.ok{background:var(--okbg);color:var(--ok)}.msg.warn{background:var(--warnbg);color:var(--warn)}
+iframe{width:100%;height:78vh;border:1px solid var(--line);border-radius:6px;background:#fff}
+code,pre{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;max-height:340px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px 18px}
+.grid label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
+.grid input,.grid select{color:var(--text);width:100%}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px}
+@keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Extractor</h1>
+  <nav id="nav">
+    <button data-tab="docs" class="active">Documents</button>
+    <button data-tab="spec">Specification</button>
+    <button data-tab="run">Run</button>
+    <button data-tab="settings">Settings</button>
+    <button data-tab="corpus">Corpus</button>
+  </nav>
+</header>
+<main>
+
+<!-- ============ DOCUMENTS ============ -->
+<section id="docs" class="active">
+  <div class="card">
+    <h2>Upload documents</h2>
+    <p class="hint">PDFs and images can be parsed. Parsing uses the native text layer and runs OCR only where a page needs it.</p>
+    <div class="drop" id="drop">Drop files here or click to choose<input id="file" type="file" multiple hidden></div>
+  </div>
+  <div class="card">
+    <h2>Documents</h2>
+    <div id="docMsg"></div>
+    <table><thead><tr><th>Name</th><th>Size</th><th>Status</th><th></th></tr></thead><tbody id="docRows"></tbody></table>
+    <div id="docEmpty" class="hint" style="margin-top:10px">No documents yet.</div>
+  </div>
+  <div class="card" id="parseCard" hidden>
+    <h2 id="parseTitle">Parse result</h2>
+    <div id="parseSummary"></div>
+    <iframe id="reportFrame" hidden></iframe>
+  </div>
+</section>
+
+<!-- ============ SPECIFICATION ============ -->
+<section id="spec">
+  <div class="card">
+    <h2>Extraction specification (YAML)</h2>
+    <p class="hint">Says <b>what</b> to extract. Validation runs as you type; model and threshold settings live in the Settings tab.</p>
+    <div class="row" style="margin-bottom:10px">
+      <select id="specSelect"></select>
+      <input id="specName" placeholder="file name" style="width:200px">
+      <button class="btn" id="specSave">Save</button>
+      <span id="specSaved" class="hint" style="margin:0"></span>
+    </div>
+    <textarea id="specText" spellcheck="false"></textarea>
+  </div>
+  <div class="card"><h2>Validation</h2><div id="specResult"></div></div>
+</section>
+
+<!-- ============ RUN ============ -->
+<section id="run">
+  <div class="card">
+    <h2>Run the engine</h2>
+    <div class="msg warn">Extraction stages (retrieval, value / interpretation / record strategies) are not built yet, so every task currently returns <b>failed</b> by design. This tab already shows the document scope, task order and result format.</div>
+    <div class="row" style="margin:10px 0">
+      <label>Spec <select id="runSpec"></select></label>
+      <button class="btn" id="runBtn">Run</button>
+    </div>
+    <div id="runDocs" class="row"></div>
+  </div>
+  <div class="card" id="runOut" hidden></div>
+</section>
+
+<!-- ============ SETTINGS ============ -->
+<section id="settings">
+  <div class="card">
+    <h2>Parsing</h2>
+    <p class="hint">Thresholds that decide when a page goes to OCR. Tune these against your scans, then re-parse.</p>
+    <div id="cfgMsg"></div>
+    <div class="grid" id="cfgForm"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn" id="cfgSave">Save</button>
+      <button class="btn ghost" id="cfgReset">Reset to defaults</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CORPUS ============ -->
+<section id="corpus">
+  <div class="card">
+    <h2>Evaluation corpus</h2>
+    <p class="hint">Your human-labeled cases in <code>evaluation/corpus/</code>.</p>
+    <div id="corpusStatus"></div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="corpusParse">Measure parsing quality</button></div>
+    <div id="corpusResult" style="margin-top:12px"></div>
+  </div>
+</section>
+
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pill = (t, k) => `<span class="pill ${k}">${esc(t)}</span>`;
+const fmtSize = n => n > 1e6 ? (n/1e6).toFixed(1)+' MB' : Math.max(1, Math.round(n/1e3))+' KB';
+
+async function api(path, opts = {}) {
+  const res = await fetch('/api' + path, opts);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || body.detail || res.statusText);
+  return body;
+}
+const json = (method, data) => ({method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+function busy(btn, on, label) { btn.disabled = on; btn.dataset.l ??= btn.textContent; btn.innerHTML = on ? `<span class="spin"></span> ${label}` : btn.dataset.l; }
+
+/* ---------- tabs ---------- */
+$('#nav').onclick = e => {
+  const tab = e.target.dataset.tab; if (!tab) return;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === e.target));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === tab));
+  if (tab === 'run') loadRun(); if (tab === 'corpus') loadCorpus(); if (tab === 'settings') loadConfig();
+};
+
+/* ---------- documents ---------- */
+const drop = $('#drop'), fileInput = $('#file');
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); upload(e.dataTransfer.files); };
+fileInput.onchange = () => upload(fileInput.files);
+
+async function upload(files) {
+  const fd = new FormData(); for (const f of files) fd.append('files', f);
+  try { await api('/documents', {method: 'POST', body: fd}); $('#docMsg').innerHTML = ''; }
+  catch (e) { $('#docMsg').innerHTML = `<div class="msg bad">${esc(e.message)}</div>`; }
+  fileInput.value = ''; loadDocs();
+}
+
+async function loadDocs() {
+  const docs = await api('/documents');
+  $('#docEmpty').hidden = docs.length > 0;
+  $('#docRows').innerHTML = docs.map(d => `<tr>
+    <td>${esc(d.name)}</td><td>${fmtSize(d.size)}</td>
+    <td>${!d.parseable ? pill('not parseable yet', 'warn') : d.parsed ? pill('parsed', 'ok') : pill('not parsed', '')}</td>
+    <td style="text-align:right;white-space:nowrap">
+      ${d.parseable ? `<button class="btn" data-act="parse" data-n="${esc(d.name)}">${d.parsed ? 'Re-parse' : 'Parse'}</button>` : ''}
+      ${d.parsed ? `<button class="btn ghost" data-act="view" data-n="${esc(d.name)}">Report</button>
+      <a class="btn ghost" style="text-decoration:none" href="/api/documents/${encodeURIComponent(d.name)}/parsed" target="_blank">JSON</a>` : ''}
+      <button class="btn danger" data-act="del" data-n="${esc(d.name)}">Delete</button>
+    </td></tr>`).join('');
+}
+
+$('#docRows').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const name = b.dataset.n;
+  if (b.dataset.act === 'del') { await api('/documents/' + encodeURIComponent(name), {method: 'DELETE'}); loadDocs(); }
+  if (b.dataset.act === 'view') showReport(name);
+  if (b.dataset.act === 'parse') {
+    busy(b, true, 'Parsing…'); $('#docMsg').innerHTML = '';
+    try { const r = await api(`/documents/${encodeURIComponent(name)}/parse`, {method: 'POST'}); showParse(r); }
+    catch (err) { $('#docMsg').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
+    busy(b, false); loadDocs();
+  }
+};
+
+function showReport(name) {
+  $('#parseCard').hidden = false; $('#parseTitle').textContent = name;
+  const f = $('#reportFrame'); f.hidden = false; f.src = `/api/documents/${encodeURIComponent(name)}/report?t=${Date.now()}`;
+  $('#parseCard').scrollIntoView({behavior: 'smooth'});
+}
+function showParse(r) {
+  const open = r.issues.filter(i => !i.resolved);
+  const ocr = r.pages.filter(p => p.route === 'ocr').length;
+  $('#parseSummary').innerHTML = `<p>${r.pages.length} page(s), ${ocr} via OCR · ${r.blocks} blocks · ${r.tables} tables · ${r.seconds}s
+    ${open.length ? pill(open.length + ' unresolved issue(s)', 'bad') : pill('no unresolved issues', 'ok')}</p>
+    <table><thead><tr><th>Page</th><th>Route</th><th>Why</th></tr></thead><tbody>
+    ${r.pages.map(p => `<tr><td>${p.page}</td><td>${pill(p.route, p.route === 'ocr' ? 'warn' : 'ok')}</td><td>${esc(p.reason)}</td></tr>`).join('')}</tbody></table>
+    ${r.issues.length ? `<table style="margin-top:10px"><thead><tr><th>Issue</th><th>Page</th><th>Detail</th><th>Tried</th><th></th></tr></thead><tbody>
+    ${r.issues.map(i => `<tr><td>${esc(i.kind)}</td><td>${i.page ?? ''}</td><td>${esc(i.message)}</td><td>${esc(i.attempts.join(' → '))}</td>
+      <td>${pill(i.resolved ? 'resolved' : 'unresolved', i.resolved ? 'ok' : 'bad')}</td></tr>`).join('')}</tbody></table>` : ''}`;
+  showReport(r.name);
+}
+
+/* ---------- specification ---------- */
+let specTimer;
+async function loadSpecs(select) {
+  const names = await api('/specs');
+  const cur = select ?? $('#specSelect').value;
+  for (const el of [$('#specSelect'), $('#runSpec')]) {
+    el.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join('');
+    if (names.includes(cur)) el.value = cur;
+  }
+  return names;
+}
+async function openSpec(name) {
+  const r = await api('/specs/' + encodeURIComponent(name));
+  $('#specText').value = r.text; $('#specName').value = name; validateSpec();
+}
+async function validateSpec() {
+  const r = await api('/specs/validate', json('POST', {text: $('#specText').value}));
+  if (!r.ok) {
+    $('#specResult').innerHTML = `<div class="msg bad"><b>${r.errors.length} error(s)</b></div><table><tbody>${r.errors.map(e =>
+      `<tr><td><code>${esc(e.path)}</code></td><td>${esc(e.message)}</td></tr>`).join('')}</tbody></table>`;
+    return;
+  }
+  $('#specResult').innerHTML = `<div class="msg ok">Valid · ${r.tasks.length} task(s)</div>
+    <table><thead><tr><th>Id</th><th>Kind</th><th>Description</th></tr></thead><tbody>${r.tasks.map(t =>
+      `<tr><td><code>${esc(t.id)}</code></td><td>${pill(t.kind, '')}</td><td>${esc(t.description)}</td></tr>`).join('')}</tbody></table>
+    <p class="hint" style="margin-top:10px">Execution layers (tasks in one layer are independent): ${r.layers.map((l, i) => `<b>${i+1}</b> ${esc(l.join(', '))}`).join(' → ')}</p>
+    ${r.review.map(i => `<div class="msg warn">Review · <code>${esc(i.task_id)}</code>: ${esc(i.message)}</div>`).join('')}`;
+}
+$('#specText').oninput = () => { clearTimeout(specTimer); specTimer = setTimeout(validateSpec, 350); };
+$('#specSelect').onchange = e => openSpec(e.target.value);
+$('#specSave').onclick = async () => {
+  const r = await api('/specs', json('POST', {name: $('#specName').value || 'untitled', text: $('#specText').value}));
+  await loadSpecs(r.name); $('#specSelect').value = r.name; $('#specName').value = r.name;
+  $('#specSaved').textContent = 'Saved ' + r.name; setTimeout(() => $('#specSaved').textContent = '', 2500);
+};
+
+/* ---------- run ---------- */
+async function loadRun() {
+  await loadSpecs();
+  const docs = await api('/documents');
+  $('#runDocs').innerHTML = docs.length ? docs.map(d => `<label><input type="checkbox" value="${esc(d.name)}" checked> ${esc(d.name)}</label>`).join('')
+    : '<span class="hint">Upload documents in the Documents tab first.</span>';
+}
+$('#runBtn').onclick = async e => {
+  const docs = [...document.querySelectorAll('#runDocs input:checked')].map(i => i.value);
+  const out = $('#runOut'); out.hidden = false; busy(e.target, true, 'Running…');
+  try {
+    const r = await api('/run', json('POST', {spec: $('#runSpec').value, documents: docs}));
+    const kind = s => ({supported: 'ok', not_found: 'warn', uncertain: 'warn', failed: 'bad'}[s]);
+    out.innerHTML = `<h2>Results</h2>
+      <p class="hint">${r.manifest.documents.length} document(s) in scope · precedence ${r.manifest.scope.precedence_resolved ? 'resolved' : 'unresolved (several documents without relationships or rules)'}</p>
+      <table><thead><tr><th>Task</th><th>Kind</th><th>Status</th><th>Value / records</th><th>Notes</th></tr></thead><tbody>${r.results.map(x => `<tr>
+        <td><code>${esc(x.task_id)}</code></td><td>${esc(x.kind)}</td><td>${pill(x.status, kind(x.status))}</td>
+        <td>${x.kind === 'records' ? esc(x.records.length + ' record(s) · ' + x.completeness) : esc(x.value ?? '—')}</td>
+        <td>${esc(x.diagnostics.join(' · '))}</td></tr>`).join('')}</tbody></table>
+      <details style="margin-top:12px"><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+  } catch (err) { out.innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
+  busy(e.target, false);
+};
+
+/* ---------- settings ---------- */
+let cfg;
+const PARSE_HELP = {
+  min_native_chars: 'Fewer characters than this on a page = no usable text layer → OCR',
+  max_garbage_ratio: 'Share of corrupted characters that sends a page to OCR (0–1)',
+  scan_image_coverage: 'Page counts as a scan when a picture covers at least this share (0–1)…',
+  scan_max_chars: '…and the page has at most this many characters',
+  region_min_image_area: 'OCR pictures covering at least this share of a native page (0–1)',
+  region_text_overlap: 'Skip a picture when text already covers more than this share (0–1)',
+  max_order_jump_ratio: 'Share of out-of-order blocks that flags broken reading order (0–1)',
+  ocr_dpi: 'Resolution of the first OCR attempt', ocr_hires_dpi: 'Resolution of the second (last) OCR attempt',
+  use_cache: 'Reuse previous parses of the same file with the same settings',
+};
+async function loadConfig() {
+  cfg = await api('/config');
+  const p = cfg.parsing, params = cfg.models.parsing.params || {};
+  const field = (k, v) => typeof v === 'boolean'
+    ? `<label>${k}<select data-k="${k}"><option ${v ? 'selected' : ''} value="true">yes</option><option ${v ? '' : 'selected'} value="false">no</option></select><small>${PARSE_HELP[k] || ''}</small></label>`
+    : `<label>${k}<input data-k="${k}" type="number" step="any" value="${v}"><small>${PARSE_HELP[k] || ''}</small></label>`;
+  $('#cfgForm').innerHTML =
+    `<label>parser<select id="cfgParser"><option value="layered" ${cfg.models.parsing.name === 'layered' ? 'selected' : ''}>layered (OpenDataLoader + Docling)</option><option value="fake" ${cfg.models.parsing.name === 'fake' ? 'selected' : ''}>fake (does nothing)</option></select></label>
+     <label>OCR device<select id="cfgDevice">${['auto','cuda','cpu'].map(d => `<option ${((params.device) || 'auto') === d ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+     <label>OCR languages (comma separated)<input id="cfgLang" value="${esc((params.languages || ['en']).join(','))}"></label>` +
+    Object.entries(p).map(([k, v]) => field(k, v)).join('');
+}
+$('#cfgSave').onclick = async () => {
+  const next = structuredClone(cfg);
+  document.querySelectorAll('#cfgForm [data-k]').forEach(el => {
+    const k = el.dataset.k, v = el.value;
+    next.parsing[k] = v === 'true' ? true : v === 'false' ? false : Number(v);
+  });
+  next.models.parsing = {name: $('#cfgParser').value, params: {device: $('#cfgDevice').value,
+    languages: $('#cfgLang').value.split(',').map(s => s.trim()).filter(Boolean)}};
+  try { await api('/config', json('PUT', next)); $('#cfgMsg').innerHTML = '<div class="msg ok">Saved. Re-parse documents to apply.</div>'; loadConfig(); }
+  catch (e) { $('#cfgMsg').innerHTML = `<div class="msg bad">${esc(e.message)}</div>`; }
+};
+$('#cfgReset').onclick = async () => { await api('/config', {method: 'DELETE'}); $('#cfgMsg').innerHTML = '<div class="msg ok">Defaults restored.</div>'; loadConfig(); };
+
+/* ---------- corpus ---------- */
+async function loadCorpus() {
+  const s = await api('/corpus');
+  $('#corpusStatus').innerHTML = s.ok
+    ? `<div class="msg ok">Corpus valid · ${s.cases.length} case(s)${s.cases.length ? ': ' + esc(s.cases.join(', ')) : ' — add labeled cases (see evaluation/corpus/README.md)'}</div>`
+    : `<div class="msg bad"><b>Problems found:</b><br>${s.problems.map(esc).join('<br>')}</div>`;
+}
+$('#corpusParse').onclick = async e => {
+  busy(e.target, true, 'Measuring…');
+  try {
+    const r = await api('/corpus/parsing', {method: 'POST'}), m = r.metrics;
+    const pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
+    $('#corpusResult').innerHTML = `<table><tbody>
+      <tr><th>Quote recall</th><td>${pct(r.quote_recall)} (${m.quotes_found}/${m.quotes_total})</td></tr>
+      <tr><th>Right page</th><td>${pct(r.page_accuracy)} (${m.quotes_on_page}/${m.quotes_with_page})</td></tr>
+      <tr><th>Pages / via OCR</th><td>${m.pages} / ${m.pages_ocr}</td></tr>
+      <tr><th>Empty / corrupted pages</th><td>${m.empty_pages} / ${m.corrupted_pages}</td></tr>
+      <tr><th>Unresolved issues</th><td>${m.unresolved_issues}</td></tr></tbody></table>
+      ${r.misses.length ? `<h2 style="margin-top:14px">Misses</h2><table><tbody>${r.misses.map(c =>
+        `<tr><td>${esc(c.document)}</td><td>p${c.page ?? '?'}</td><td>${esc(c.quote)}</td><td>${c.found ? pill('wrong page', 'warn') : pill('not found', 'bad')}</td></tr>`).join('')}</tbody></table>` : ''}`;
+  } catch (err) { $('#corpusResult').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
+  busy(e.target, false);
+};
+
+/* ---------- init ---------- */
+loadDocs(); loadSpecs().then(names => names.length && openSpec(names.includes('example.yaml') ? 'example.yaml' : names[0]));
+</script>
+</body>
+</html>
