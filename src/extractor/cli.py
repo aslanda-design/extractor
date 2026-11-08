@@ -87,7 +87,9 @@ def cmd_parse(args: argparse.Namespace) -> int:
 
     ocr_pages = sum(p.route == "ocr" for p in representation.pages)
     open_issues = [i for i in representation.issues if not i.resolved]
+    restored = sum(p.recovered_words for p in representation.pages)
     print(f"{len(representation.pages)} page(s) ({ocr_pages} via OCR), {len(representation.blocks)} block(s), "
+          f"{restored} word(s) restored from the text layer, "
           f"{len(representation.issues)} issue(s) ({len(open_issues)} unresolved)")
     print(f"json:   {json_path}")
     print(f"report: {html_path}")

@@ -15,8 +15,8 @@ from ..adapters.base import AdapterCapabilities, AdapterContext, ModelIdentity, 
 from ..artifacts.fingerprint import fingerprint
 from ..contracts.document import DocumentRepresentation
 from ..contracts.manifest import DocumentEntry
-from .backends.base import NativeBackend, OcrBackend, PageRenderer
-from .orchestrator import parse_document
+from .backends.base import NativeBackend, OcrBackend, PageRenderer, ReferenceTextBackend
+from .parsing_pipeline import parse_document
 
 
 def _version(package: str) -> str:
@@ -41,19 +41,21 @@ class LayeredParser(ParserAdapter):
         native: NativeBackend | None = None,
         ocr: OcrBackend | None = None,
         renderer: PageRenderer | None = None,
+        reference: ReferenceTextBackend | None = None,
         languages: list[str] | None = None,
         device: str = "auto",
     ):
         super().__init__(context)
         self._native, self._ocr, self._renderer = native, ocr, renderer
+        self._reference = reference
         self._languages, self._device = languages or ["en"], device
-        self._injected = native is not None or ocr is not None
+        self._injected = native is not None or ocr is not None or reference is not None
 
     @property
     def identity(self) -> ModelIdentity:
         if self._injected:
             return ModelIdentity(name="layered(injected)", revision="test")
-        revision = f"odl-{_version('opendataloader-pdf')}+docling-{_version('docling')}"
+        revision = f"odl-{_version('opendataloader-pdf')}+docling-{_version('docling')}+reconcile-1"
         return ModelIdentity(
             name="layered", revision=revision,
             settings={"languages": self._languages, "device": self._device},
@@ -65,7 +67,7 @@ class LayeredParser(ParserAdapter):
 
     # --- lazy real backends --------------------------------------------------
 
-    def _backends(self) -> tuple[NativeBackend, OcrBackend, PageRenderer]:
+    def _backends(self) -> tuple[NativeBackend, OcrBackend, PageRenderer, ReferenceTextBackend | None]:
         if self._native is None:
             from .backends.opendataloader import OpenDataLoaderBackend
 
@@ -83,7 +85,11 @@ class LayeredParser(ParserAdapter):
             from .backends.pdfium_renderer import PdfiumRenderer
 
             self._renderer = PdfiumRenderer()
-        return self._native, self._ocr, self._renderer
+        if self._reference is None and not self._injected:  # injected (test) backends opt in explicitly
+            from .backends.pdfium_text import PdfiumReferenceText
+
+            self._reference = PdfiumReferenceText()
+        return self._native, self._ocr, self._renderer, self._reference
 
     # --- ParserAdapter -------------------------------------------------------
 
@@ -95,9 +101,9 @@ class LayeredParser(ParserAdapter):
             if cached is not None:
                 return cached
 
-        native, ocr, renderer = self._backends()
+        native, ocr, renderer, reference = self._backends()
         representation, extraction = parse_document(
-            entry.document_id, source_path, entry.format, config, native, ocr, renderer
+            entry.document_id, source_path, entry.format, config, native, ocr, renderer, reference
         )
         if store:
             if extraction is not None:

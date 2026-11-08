@@ -16,7 +16,7 @@ from .raw import BBox, RawPage
 _REPLACEMENT = "�"
 
 
-def _is_garbage(ch: str) -> bool:
+def is_garbage(ch: str) -> bool:
     code = ord(ch)
     return (
         ch == _REPLACEMENT
@@ -44,7 +44,7 @@ class RouteDecision(StrictModel):
 
 def compute_signals(page: RawPage) -> PageSignals:
     text = "".join(ch for b in page.blocks for ch in b.text if not ch.isspace())
-    garbage = sum(_is_garbage(ch) for ch in text)
+    garbage = sum(is_garbage(ch) for ch in text)
     page_area = page.width * page.height
     covered = sum(area(b) for b in page.image_boxes)
     return PageSignals(

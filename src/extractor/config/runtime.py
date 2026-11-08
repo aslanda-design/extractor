@@ -50,6 +50,10 @@ class ParsingConfig(StrictModel):
     region_text_overlap: float = Field(default=0.3, ge=0, le=1)  # image already covered by text above this
     # --- issue detection -----------------------------------------------------
     max_order_jump_ratio: float = Field(default=0.3, ge=0, le=1)  # share of blocks out of reading order
+    # --- completeness check against the PDF's own text layer ------------------
+    reconcile: bool = True  # compare the layout parse with the text layer and restore missing words
+    reconcile_min_missing_words: int = Field(default=1, ge=1)  # restore only when at least this many are missing
+    reconcile_box_tolerance: float = Field(default=3.0, ge=0)  # points of slack when matching a word to a block
     # --- OCR retry ladder ----------------------------------------------------
     ocr_dpi: int = Field(default=200, ge=72)
     ocr_hires_dpi: int = Field(default=300, ge=72)

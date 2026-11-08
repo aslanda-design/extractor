@@ -309,10 +309,13 @@ $('#searchQ').onkeydown = e => { if (e.key === 'Enter') $('#searchBtn').click();
 function showParse(r) {
   const open = r.issues.filter(i => !i.resolved);
   const ocr = r.pages.filter(p => p.route === 'ocr').length;
+  const cov = p => p.coverage == null ? '<span class="hint">not checked</span>'
+    : pill(Math.round(p.coverage * 100) + '%', p.coverage >= 0.99 ? 'ok' : 'warn') + (p.recovered ? ` ${p.recovered} word(s) restored` : '');
   $('#parseSummary').innerHTML = `<p>${r.pages.length} page(s), ${ocr} via OCR · ${r.blocks} blocks · ${r.tables} tables · ${r.seconds}s
+    ${r.recovered_words ? pill(r.recovered_words + ' word(s) restored from the PDF text layer', 'warn') : ''}
     ${open.length ? pill(open.length + ' unresolved issue(s)', 'bad') : pill('no unresolved issues', 'ok')}</p>
-    <table><thead><tr><th>Page</th><th>Route</th><th>Why</th></tr></thead><tbody>
-    ${r.pages.map(p => `<tr><td>${p.page}</td><td>${pill(p.route, p.route === 'ocr' ? 'warn' : 'ok')}</td><td>${esc(p.reason)}</td></tr>`).join('')}</tbody></table>
+    <table><thead><tr><th>Page</th><th>Route</th><th>Why</th><th title="Share of the PDF text layer's words the layout parser kept">Layout coverage</th></tr></thead><tbody>
+    ${r.pages.map(p => `<tr><td>${p.page}</td><td>${pill(p.route, p.route === 'ocr' ? 'warn' : 'ok')}</td><td>${esc(p.reason)}</td><td>${cov(p)}</td></tr>`).join('')}</tbody></table>
     ${r.issues.length ? `<table style="margin-top:10px"><thead><tr><th>Issue</th><th>Page</th><th>Detail</th><th>Tried</th><th></th></tr></thead><tbody>
     ${r.issues.map(i => `<tr><td>${esc(i.kind)}</td><td>${i.page ?? ''}</td><td>${esc(i.message)}</td><td>${esc(i.attempts.join(' → '))}</td>
       <td>${pill(i.resolved ? 'resolved' : 'unresolved', i.resolved ? 'ok' : 'bad')}</td></tr>`).join('')}</tbody></table>` : ''}`;
@@ -389,6 +392,9 @@ const PARSE_HELP = {
   region_min_image_area: 'OCR pictures covering at least this share of a native page (0–1)',
   region_text_overlap: 'Skip a picture when text already covers more than this share (0–1)',
   max_order_jump_ratio: 'Share of out-of-order blocks that flags broken reading order (0–1)',
+  reconcile: 'Compare the layout parse with the PDF text layer and restore any word the layout parser dropped',
+  reconcile_min_missing_words: 'Restore only when at least this many words are missing from a page',
+  reconcile_box_tolerance: 'Points of slack when deciding that a word lies inside a parsed block',
   ocr_dpi: 'Resolution of the first OCR attempt', ocr_hires_dpi: 'Resolution of the second (last) OCR attempt',
   use_cache: 'Reuse previous parses of the same file with the same settings',
 };

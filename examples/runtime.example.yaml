@@ -74,6 +74,9 @@ retrieval:
 
 parsing:                             # S03 routing thresholds
   min_native_chars: 30
+  reconcile: true                    # check the layout parse against the PDF text layer, restore dropped words
+  # reconcile_min_missing_words: 1
+  # reconcile_box_tolerance: 3.0
   max_garbage_ratio: 0.03
   ocr_dpi: 200
   ocr_hires_dpi: 300

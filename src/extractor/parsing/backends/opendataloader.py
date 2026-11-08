@@ -71,21 +71,19 @@ class OpenDataLoaderBackend:
         elif kind == "table":
             if page:
                 page.blocks.append(self._table(element, page))
-        elif kind in _TEXT_KINDS and "content" in element:
-            if page:
+        else:
+            # A node can carry its own text AND children: a `list item` holds only its first
+            # line in `content`, the rest of the paragraph sits in `kids`. Emit the own text,
+            # then ALWAYS descend, otherwise whole paragraphs vanish silently.
+            if "content" in element and page and kind not in _CONTAINERS:
                 bbox = _to_top_left(element["bounding box"], page.height) if element.get("bounding box") else None
                 page.blocks.append(RawBlock(
-                    kind=_TEXT_KINDS[kind], text=element["content"], bbox=bbox,
+                    kind=_TEXT_KINDS.get(kind, BlockKind.OTHER), text=element["content"], bbox=bbox,
                     parser_id=str(element.get("id")),
                     heading_level=element.get("heading level") if kind == "heading" else None))
-        else:  # containers (header, footer, list, ...) and unknown types: descend
             for child_key in ("kids", "list items"):
                 for child in element.get(child_key, []):
                     self._walk(child, pages)
-            if kind not in _CONTAINERS and "content" in element and page:  # unknown text-bearing type
-                bbox = _to_top_left(element["bounding box"], page.height) if element.get("bounding box") else None
-                page.blocks.append(RawBlock(kind=BlockKind.OTHER, text=element["content"], bbox=bbox,
-                                            parser_id=str(element.get("id"))))
 
     @staticmethod
     def _cell_text(cell: dict) -> str:

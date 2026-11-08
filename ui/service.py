@@ -161,7 +161,9 @@ class Workspace:
         return {
             "name": name,
             "seconds": round(time.time() - started, 1),
-            "pages": [{"page": p.page, "route": p.route, "reason": p.route_reason} for p in rep.pages],
+            "pages": [{"page": p.page, "route": p.route, "reason": p.route_reason,
+                       "coverage": p.layout_coverage, "recovered": p.recovered_words} for p in rep.pages],
+            "recovered_words": sum(p.recovered_words for p in rep.pages),
             "blocks": len(rep.blocks),
             "tables": len(rep.tables),
             "issues": [

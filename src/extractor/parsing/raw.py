@@ -19,6 +19,14 @@ class RawBlock(StrictModel):
     heading_level: int | None = None
     cells: list[TableCell] = []  # only for tables
     from_ocr: bool = False
+    recovered: bool = False  # restored from the PDF text layer by reconcile.py
+
+
+class RefWord(StrictModel):
+    """One word of the PDF's own text layer (the independent reference used to check completeness)."""
+
+    text: str
+    bbox: BBox
 
 
 class RawPage(StrictModel):

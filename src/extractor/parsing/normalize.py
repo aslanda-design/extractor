@@ -33,6 +33,7 @@ def to_source_blocks(
                 bbox=raw.bbox,
                 heading_level=raw.heading_level,
                 from_ocr=from_ocr or raw.from_ocr,
+                recovered=raw.recovered,
                 parser_id=raw.parser_id,
             )
         )
@@ -41,5 +42,8 @@ def to_source_blocks(
     return blocks, tables
 
 
-def page_info(page: RawPage, route: str, reason: str) -> PageInfo:
-    return PageInfo(page=page.page, width=page.width, height=page.height, route=route, route_reason=reason)
+def page_info(
+    page: RawPage, route: str, reason: str, layout_coverage: float | None = None, recovered_words: int = 0
+) -> PageInfo:
+    return PageInfo(page=page.page, width=page.width, height=page.height, route=route, route_reason=reason,
+                    layout_coverage=layout_coverage, recovered_words=recovered_words)

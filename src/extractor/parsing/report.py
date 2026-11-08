@@ -2,7 +2,8 @@
 
 Boxes are drawn from the blocks' own bounding boxes, so what you see is exactly
 the page mapping that evidence will use. Hover a block (either side) to
-highlight its counterpart. Dashed outlines = text that came from OCR.
+highlight its counterpart. Dashed outlines = text that came from OCR; dotted green = words the
+layout parser dropped and that were restored from the PDF text layer.
 """
 
 import base64
@@ -26,10 +27,11 @@ header{padding:12px 20px;background:#fff;border-bottom:1px solid #d4d4d8}
 .sheet{position:sticky;top:8px;flex:0 0 560px}.sheet img{width:100%;display:block;border:1px solid #a1a1aa}
 .box{position:absolute;border:1.5px solid #2563eb;background:rgba(37,99,235,.08)}
 .box.ocr{border-style:dashed;border-color:#d97706;background:rgba(217,119,6,.08)}
+.box.rec{border-style:dotted;border-color:#16a34a;background:rgba(22,163,74,.12)}
 .box.hl{background:rgba(220,38,38,.35);border-color:#dc2626}
 .blocks{flex:1;min-width:0}.blocks h3{margin:0 0 6px}
 .blk{padding:4px 6px;margin:2px 0;background:#fff;border-left:3px solid #2563eb;cursor:default}
-.blk.ocr{border-left-color:#d97706}.blk.hl{background:#fee2e2}
+.blk.ocr{border-left-color:#d97706}.blk.rec{border-left-color:#16a34a}.blk.hl{background:#fee2e2}
 .blk small{color:#71717a}.blk pre{margin:2px 0 0;white-space:pre-wrap;font:inherit}
 """
 
@@ -51,7 +53,7 @@ def _page_image(renderer: PageRenderer, source: Path, number: int) -> str:
 def _page_html(rep: DocumentRepresentation, info: PageInfo, image_b64: str) -> str:
     boxes, rows = [], []
     for b in (b for b in rep.blocks if b.page == info.page):
-        ocr = " ocr" if b.from_ocr else ""
+        ocr = " ocr" if b.from_ocr else (" rec" if b.recovered else "")
         key = html.escape(b.block_id, quote=True)
         if b.bbox:
             l, t, r, bt = b.bbox
@@ -60,11 +62,13 @@ def _page_html(rep: DocumentRepresentation, info: PageInfo, image_b64: str) -> s
             boxes.append(f'<div class="box{ocr}" data-b="{key}" style="{style}"></div>')
         level = f" h{b.heading_level}" if b.heading_level else ""
         rows.append(f'<div class="blk{ocr}" data-b="{key}"><small>{html.escape(b.block_id)} · '
-                    f'{b.kind.value}{level}{" · OCR" if b.from_ocr else ""}</small>'
+                    f'{b.kind.value}{level}{" · OCR" if b.from_ocr else ""}{" · RESTORED from text layer" if b.recovered else ""}</small>'
                     f'<pre>{html.escape(b.text)}</pre></div>')
+    coverage = "" if info.layout_coverage is None else (
+        f" · layout coverage {info.layout_coverage:.0%}" + (f", {info.recovered_words} word(s) restored" if info.recovered_words else ""))
     return (f'<section class="page"><div class="sheet"><img src="data:image/png;base64,{image_b64}">'
             f'{"".join(boxes)}</div><div class="blocks"><h3>Page {info.page} — route: {info.route}'
-            f' <small>({html.escape(info.route_reason)})</small></h3>{"".join(rows)}</div></section>')
+            f' <small>({html.escape(info.route_reason)}{coverage})</small></h3>{"".join(rows)}</div></section>')
 
 
 def build_report(rep: DocumentRepresentation, source: Path, renderer: PageRenderer, title: str = "") -> str:

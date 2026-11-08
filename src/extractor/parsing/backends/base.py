@@ -7,7 +7,7 @@ points, top-left origin). Native objects of a library never leave its module.
 from pathlib import Path
 from typing import Protocol
 
-from ..raw import BBox, NativeExtraction, RawBlock
+from ..raw import BBox, NativeExtraction, RawBlock, RefWord
 
 
 class NativeBackend(Protocol):
@@ -37,3 +37,16 @@ class PageRenderer(Protocol):
 
     def render(self, path: Path, page: int, dpi: int, out: Path, crop: BBox | None = None) -> float:
         """Write a PNG of the page (or of `crop`, in points) and return pixels-per-point."""
+
+
+class ReferenceTextBackend(Protocol):
+    """Independent, cheap read of the PDF own text layer: every word with its position.
+
+    It is NOT used as the parse. It is the yardstick the layout parse is checked against
+    (see reconcile.py), so it must not share a code path with the NativeBackend.
+    """
+
+    name: str
+
+    def words(self, path: Path, page: int) -> list[RefWord]:
+        """Words of one page, bboxes in points, top-left origin, in text-layer order."""
