@@ -36,7 +36,7 @@ from .record import FieldResult, Record
 from .result import EvidenceLink, ExecutionMetadata, TaskResult
 from .specification import CompiledSpecification, SpecificationFile, SpecIssue
 from .task import TaskSpecification
-from .validation import ValidationFinding, ValidationReport
+from .validation import AcceptanceDecision, Category, RecoveryHint, ValidationFinding, ValidationReport
 
 __all__ = [
     "Candidate", "InterpretationProposal", "ModelCall", "ModelPrompt", "ModelReply", "ProposalOutcome", "ValueProposal", "Completeness", "EvidenceRole", "MutableModel",
@@ -45,6 +45,6 @@ __all__ = [
     "EvidencePackage", "DocumentEntry", "DocumentManifest", "DocumentRelationship", "Scope",
     "FieldResult", "Record", "EvidenceLink", "ExecutionMetadata", "TaskResult",
     "CompiledSpecification", "SpecificationFile", "SpecIssue", "TaskSpecification",
-    "ValidationFinding", "ValidationReport", "Continuation", "IndexedDocument", "Passage",
+    "AcceptanceDecision", "Category", "RecoveryHint", "ValidationFinding", "ValidationReport", "Continuation", "IndexedDocument", "Passage",
     "PassageSegment", "Reference", "EvidenceOrigin", "EvidencePassage", "RetrievalTrace",
 ]

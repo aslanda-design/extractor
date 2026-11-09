@@ -5,6 +5,7 @@ Everything here can change without touching a task's meaning.
 """
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import Field, model_validator
@@ -198,6 +199,27 @@ class ExtractionSettings(StrictModel):
     allow_unlocated_quotes: bool = True  # keep candidates whose quote is not in the evidence (flagged), instead of dropping them
 
 
+class QualificationThresholds(StrictModel):
+    """What a model + settings combination must reach on YOUR labeled corpus to be qualified (S11)."""
+
+    min_tasks: int = Field(default=20, ge=1)
+    min_accepted_precision: float = Field(default=0.95, ge=0, le=1)  # share of `supported` answers that are right
+    max_false_absence_rate: float = Field(default=0.02, ge=0, le=1)  # share of tasks wrongly called not_found
+
+
+class AcceptanceSettings(StrictModel):
+    """S10/S11: which findings block acceptance, and the optional checks. Never a model confidence number."""
+
+    profile: Literal["strict", "standard", "lenient"] = "standard"
+    block: list[str] = []  # finding categories that block in addition to the profile
+    allow: list[str] = []  # finding categories that never block, whatever the profile
+    risk_relevance_ratio: float = Field(default=0.5, ge=0, le=1)  # a damaged region matters when its relevance reaches this share of the best evidence
+    semantic_check: bool = False  # S10 semantic support: one call to models.verification on the chosen answer
+    think_semantic: bool | None = None
+    require_qualification: bool = False  # unqualified model + settings cap the result at `uncertain`
+    qualification: QualificationThresholds = QualificationThresholds()
+
+
 # Extraction depth that goes with each retrieval profile. `deep` lets the model reason (measured: fixes about 40% of the
 # errors left at standard depth, at 2-3x the time). Override or add profiles under `extraction_profiles:` in the runtime config.
 BUILTIN_EXTRACTION_PROFILES: dict[str, dict] = {
@@ -212,13 +234,14 @@ class RuntimeConfig(StrictModel):
     indexing: IndexingConfig = IndexingConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
     extraction: ExtractionSettings = ExtractionSettings()
+    acceptance: AcceptanceSettings = AcceptanceSettings()
     extraction_profiles: dict[str, dict] = {}  # profile name -> ExtractionSettings fields to change at that depth
     storage: StorageConfig = StorageConfig()
 
     def fingerprint(self) -> str:
         """Identity of the settings that can change results (storage path excluded)."""
         return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking,
-                           self.retrieval.resolve(), self.extraction, self.extraction_profiles)
+                           self.retrieval.resolve(), self.extraction, self.extraction_profiles, self.acceptance)
 
     def extraction_for(self, profile: str | None = None) -> ExtractionSettings:
         """S07 settings at the given depth: the base `extraction:` block, the built-in profile of that name, then yours."""

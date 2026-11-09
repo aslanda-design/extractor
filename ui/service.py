@@ -29,10 +29,13 @@ from extractor.config.runtime import RetrievalSettings
 from extractor.contracts.common import TaskKind
 from extractor.contracts.task import TaskSpecification
 from extractor.extraction import extract_value
+from extractor.retrieval.queries import build_queries
+from extractor.validation import validate_and_accept
 from extractor.events import LOG, emit, run_scope
 from extractor.contracts.specification import SpecificationFile
 from extractor.contracts.task import LabelSpec
 from extractor.evaluation import CorpusError, load_corpus
+from extractor.evaluation.acceptance_eval import evaluate_acceptance
 from extractor.evaluation.extraction_eval import IMPLEMENTED_KINDS, evaluate_extraction
 from extractor.evaluation.indexing_eval import evaluate_indexing
 from extractor.evaluation.parsing_eval import evaluate_parsing
@@ -172,6 +175,8 @@ class Workspace:
         """Names the UI can offer (everything registered in the engine) and the retrieval profiles."""
         retrieval = self.get_config().retrieval
         return {"extraction": registered_adapters(Capability.EXTRACTION),
+                "verification": registered_adapters(Capability.VERIFICATION),
+                "acceptance_profiles": ["strict", "standard", "lenient"],
                 "embedding": registered_adapters(Capability.EMBEDDING),
                 "reranking": registered_adapters(Capability.RERANKING),
                 "stores": registered_stores(),
@@ -476,6 +481,10 @@ class Workspace:
             package = gather_evidence(request_from_task(task), indexed, tools, settings, manifest=manifest, profile=profile_name)
             retrieved_at = time.time()
             proposal = extract_value(task, package, indexed, adapters.extractor, config.extraction_for(profile_name))
+            validated = validate_and_accept(                                    # S10 + S11
+                task, proposal, package, indexed, config.acceptance, scorer=lambda q, t: adapters.reranker.score(q, t),
+                query=build_queries(request_from_task(task), settings).rerank, verifier=adapters.verifier,
+                retries=config.extraction_for(profile_name).retries)
         filenames = {e.document_id: e.filename for e in manifest.documents}
         passages = {p.passage_id: p for d in indexed for p in d.passages}
         evidence = self._evidence_view(package, indexed, filenames, settings, round(retrieved_at - started, 1))
@@ -494,11 +503,13 @@ class Workspace:
             "calls": [{"purpose": c.purpose, "system": c.prompt.system, "user": c.prompt.user, "schema": c.prompt.json_schema,
                        "raw": c.reply.raw, "error": c.reply.error, "seconds": c.reply.seconds,
                        "prompt_tokens": c.reply.prompt_tokens, "completion_tokens": c.reply.completion_tokens}
-                      for c in proposal.calls],
+                      for c in [*proposal.calls, *validated.calls]],
             "evidence": evidence, "seconds": round(time.time() - started, 1),
-            "would_be": ("uncertain (a found value is not accepted until validation exists: phase 6)"
-                         if proposal.outcome.value == "found"
-                         else {"absent": task.rules.on_absent.value, "uncertain": "uncertain", "failed": "failed"}[proposal.outcome.value]),
+            "would_be": validated.decision.status.value,
+            "validation": {
+                "status": validated.decision.status.value, "policy": validated.decision.policy, "reasons": validated.decision.reasons,
+                "findings": [f.model_dump(mode="json") for f in validated.report.findings],
+                "hints": [h.model_dump(mode="json") for h in validated.decision.hints]},
         }
 
     # --- specifications ---------------------------------------------------------
@@ -608,6 +619,24 @@ class Workspace:
         return {"rows": [r.model_dump(mode="json") for r in report.rows],
                 "misses": [o.model_dump(mode="json") for o in report.outcomes
                            if o.outcome not in ("correct", "correct_absence", "correct_uncertain")]}
+
+    @recorded("corpus.acceptance")
+    def corpus_acceptance(self, kinds: list[str] | None = None, tags: list[str] | None = None,
+                          cases: list[str] | None = None, qualify: bool = False) -> dict:
+        corpus = load_corpus(CORPUS_DIR)
+        if not corpus.cases:
+            raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
+        config = self.get_config()
+        with self._job("Measure acceptance"):
+            _, adapters = self._builder(config)
+            try:
+                report = evaluate_acceptance(corpus, config, adapters, self.store, [config.retrieval.profile],
+                                             [TaskKind(k) for k in kinds or []] or None, tags or None, cases or None, qualify=qualify)
+            except ValueError as exc:
+                raise UiError(str(exc))
+        rows = [{**r.model_dump(mode="json"), "automation_rate": r.automation_rate, "accepted_precision": r.accepted_precision,
+                 "false_accept_rate": r.false_accept_rate, "false_absence_rate": r.false_absence_rate} for r in report.rows]
+        return {"rows": rows, "misses": [o.model_dump(mode="json") for o in report.outcomes if o.outcome not in ("accepted_correct", "correct_absence", "correct_uncertain")]}
 
     @recorded("corpus.parsing")
     def corpus_parsing(self) -> dict:

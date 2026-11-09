@@ -72,7 +72,9 @@ class FakeInterpreter(InterpreterAdapter):
 
 
 class FakeVerifier(VerifierAdapter):
+    """No model: the semantic check reports that it could not run."""
+
     identity = _FAKE
 
-    def verify(self, task, proposal, evidence) -> list[ValidationFinding]:
-        return []
+    def generate(self, prompt: ModelPrompt) -> ModelReply:
+        return ModelReply(error="fake verifier: no model configured (set models.verification in the runtime config)")

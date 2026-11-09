@@ -16,8 +16,8 @@ owns that stage; steps marked STUB are not built yet and report `failed`.
             S07  extract a value                              extraction/     value_pipeline.py
             S08  interpret                                    STUB (phase 7)
             S09  discover records                             STUB (phase 8)
-            S10  validate                                     STUB (phase 6)
-            S11  accept                                       STUB (phase 6)
+            S10  validate                                     validation/     validation_pipeline.py
+            S11  accept                                       validation/     (same file: policy.py)
             S12  recover (retry what failed)                  STUB (phase 9)
             S13  result                                       contracts/result.py
 
@@ -42,9 +42,13 @@ from ..contracts.candidate import ProposalOutcome, ValueProposal
 from ..contracts.evidence import EvidencePackage
 from ..contracts.passage import IndexedDocument
 from ..contracts.result import EvidenceLink, ExecutionMetadata
+from ..contracts.validation import ValidationReport
 from ..contracts.task import OnAbsent, TaskSpecification
 from ..events import emit, progress
 from ..extraction import extract_value
+from ..validation import Validated, validate_and_accept
+from ..validation.qualification import is_qualified, qualification_key
+from ..retrieval.queries import build_queries
 from ..indexing.builder import IndexBuilder
 from ..retrieval.retrieval_pipeline import gather_evidence
 from ..retrieval.tools import build_retrieval_tools
@@ -52,7 +56,7 @@ from ..retrieval.types import RetrievalTools, request_from_task
 from ..scope import DocumentRequest, build_manifest, resolve_task_documents
 from ..spec import compile_specification_file
 
-STAGE_VERSIONS = {"S01": "1", "S02": "1", "S03": "1", "S04": "1", "S06": "1", "S07": "1"}
+STAGE_VERSIONS = {"S01": "1", "S02": "1", "S03": "1", "S04": "1", "S06": "1", "S07": "2", "S10": "1", "S11": "1"}
 
 
 @dataclass
@@ -71,6 +75,9 @@ class RunContext:
     ledger: CoverageLedger = field(default_factory=CoverageLedger)
     evidence: dict[str, EvidencePackage] = field(default_factory=dict)
     proposals: dict[str, ValueProposal] = field(default_factory=dict)
+    decisions: dict[str, Validated] = field(default_factory=dict)
+    accepted: set[str] = field(default_factory=set)  # tasks whose answer was accepted, for depends_on checks
+    store: ArtifactStore | None = None
 
 
 # --------------------------------------------------------------------------------------
@@ -122,7 +129,7 @@ def run_pipeline(
     ctx = RunContext(
         spec=spec, manifest=manifest, adapters=adapters, config=config, indexed=indexed,
         tools=build_retrieval_tools(config, adapters, store) if indexed is not None and store else None,
-        retrieval=config.retrieval.resolve(profile), profile=profile or config.retrieval.profile,
+        retrieval=config.retrieval.resolve(profile), profile=profile or config.retrieval.profile, store=store,
         execution=ExecutionMetadata(
             document_hashes={d.document_id: d.sha256 for d in manifest.documents},
             schema_hash=spec.schema_hash, runtime_fingerprint=config.fingerprint(),
@@ -170,51 +177,65 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
                      f"{package.trace.used_tokens}/{package.trace.budget_tokens} tokens, {len(package.gaps)} gap(s)")
 
     # S07. Extract a value (value tasks). S08 interpretation and S09 records come in phases 7 and 8.
-    status, value, alternatives, evidence = TaskStatus.FAILED, None, [], []
+    status, value, alternatives, evidence, validation, acceptance = TaskStatus.FAILED, None, [], [], ValidationReport(), None
     if task.id in ctx.evidence and task.kind == TaskKind.VALUE:
-        proposal = extract_value(task, ctx.evidence[task.id], [ctx.indexed[d] for d in document_ids if d in ctx.indexed],
-                                 ctx.adapters.extractor, ctx.config.extraction_for(ctx.profile), ledger=ctx.ledger)
+        scope_docs = [ctx.indexed[d] for d in document_ids if d in ctx.indexed]
+        proposal = extract_value(task, ctx.evidence[task.id], scope_docs, ctx.adapters.extractor,
+                                 ctx.config.extraction_for(ctx.profile), ledger=ctx.ledger)
         ctx.proposals[task.id] = proposal
-        status, alternatives, evidence = _proposal_to_result(task, proposal, notes)
+        notes.append(f"extraction ({proposal.outcome.value}): {proposal.reason}")
+
+        # S10 + S11. Validate the proposal and apply the engine's acceptance policy.
+        query = build_queries(request_from_task(task, document_ids), ctx.retrieval).rerank
+        qualified = is_qualified(ctx.store, qualification_key(ctx.config, ctx.adapters, ctx.profile)) \
+            if ctx.config.acceptance.require_qualification else None
+        validated = validate_and_accept(
+            task, proposal, ctx.evidence[task.id], scope_docs, ctx.config.acceptance,
+            scorer=(lambda q, texts: ctx.tools.reranker.score(q, texts)) if ctx.tools else None, query=query,
+            verifier=ctx.adapters.verifier, accepted_tasks=ctx.accepted, qualified=qualified,
+            retries=ctx.config.extraction_for(ctx.profile).retries, ledger=ctx.ledger)
+        ctx.decisions[task.id] = validated
+        status, value, alternatives, evidence = _result_parts(proposal, validated)
+        validation, acceptance = validated.report, validated.decision
+        if status == TaskStatus.SUPPORTED:
+            ctx.accepted.add(task.id)
+        notes += [f"{status.value}: {why}" for why in validated.decision.reasons[:3]]
+        notes += [f"info: {f.message}" for f in validated.report.findings if f.severity.value == "info"][:5]
     else:
         notes.append("extraction stages S08 and S09 are not implemented yet" if task.kind != TaskKind.VALUE
                      else "no evidence was gathered, so nothing could be extracted")
 
-    # S10. Validate the proposal.                                             STUB (phase 6)
-    # S11. Accept it under the engine's policy.                               STUB (phase 6)
     # S12. Recover: retry the affected stage with a concrete improvement.     STUB (phase 9)
-    notes.append("S05 and S10-S12 are not implemented yet: nothing is accepted as `supported`")
+    #      Phase 6 already records what recovery could do: `acceptance.hints` (reparse a region, inspect omitted passages...).
+    notes.append("S05 and S12 are not implemented yet")
 
     # S13. The result.
     return TaskResult(
-        task_id=task.id, kind=task.kind, status=status, alternatives=alternatives, evidence=evidence,
+        task_id=task.id, kind=task.kind, status=status, value=value, alternatives=alternatives, evidence=evidence,
         completeness=Completeness.UNKNOWN if task.kind == TaskKind.RECORDS else None,
-        diagnostics=notes, execution=ctx.execution)
+        validation=validation, acceptance=acceptance, diagnostics=notes, execution=ctx.execution)
 
 
-def _proposal_to_result(task: TaskSpecification, proposal: ValueProposal, notes: list[str]):
-    """Until validation and acceptance exist (phase 6), a proposal is never `supported`.
+def _result_parts(proposal: ValueProposal, validated: Validated):
+    """(status, value, alternatives, evidence) from the engine's decision.
 
-    A found value is offered as an alternative of an `uncertain` result; absence follows the
-    task's `on_absent`; a failed call stays `failed`. The reason is always kept as a diagnostic.
+    Only an accepted answer becomes `value`. A found-but-blocked value, or the conflicting candidates of an
+    uncertain proposal, are offered as `alternatives`; a failure or a complete absence carries none.
     """
-    notes.append(f"extraction ({proposal.outcome.value}): {proposal.reason}")
-    notes += [f"gap: {g}" for g in proposal.gaps]
-    evidence = [EvidenceLink(ref=ref, role=EvidenceRole.SUPPORTS, quote=c.quote)
-                for c in proposal.chosen for ref in c.evidence]
+    status = validated.decision.status
+    chosen_evidence = [EvidenceLink(ref=ref, role=EvidenceRole.SUPPORTS, quote=c.quote) for c in proposal.chosen for ref in c.evidence]
+    if status == TaskStatus.SUPPORTED:
+        return status, proposal.value, [], chosen_evidence
     if proposal.outcome == ProposalOutcome.FOUND:
-        notes.append("proposed value is not validated or accepted yet (phase 6)")
-        return TaskStatus.UNCERTAIN, [proposal.value], evidence
-    if proposal.outcome == ProposalOutcome.ABSENT:
-        return (TaskStatus.NOT_FOUND if task.rules.on_absent == OnAbsent.NOT_FOUND else TaskStatus.UNCERTAIN), [], []
+        return status, None, [proposal.value], chosen_evidence
     if proposal.outcome == ProposalOutcome.UNCERTAIN:
-        values = [c.normalized_value if c.normalized_value is not None else c.source_value for c in proposal.candidates]
+        live = [c for c in proposal.candidates if not any(f.startswith("rejected:") for f in c.flags)]
         seen: dict[str, object] = {}
-        for v in values:
+        for c in live:
+            v = c.normalized_value if c.normalized_value is not None else c.source_value
             seen.setdefault(json.dumps(v, sort_keys=True, default=str), v)
-        return TaskStatus.UNCERTAIN, list(seen.values()), []
-    return TaskStatus.FAILED, [], []
-
+        return status, None, list(seen.values()), []
+    return status, None, [], []
 
 
 # --------------------------------------------------------------------------------------

@@ -41,6 +41,11 @@ models:
   #   name: http_rerank
   #   params: {base_url: https://api.cohere.com/v2, model: rerank-v3.5, api_key_env: COHERE_API_KEY}
 
+  # --- optional semantic check at S10 (acceptance.semantic_check): may be a different, bigger model -----
+  # verification:
+  #   name: openai_compatible_chat
+  #   params: {base_url: https://api.openai.com/v1, model: gpt-4.1, api_key_env: OPENAI_API_KEY, context_tokens: 128000}
+
   # --- swap: the model that reads the evidence and answers (S07) ---------------------------
   extraction:
     name: ollama_chat                # local Ollama:  ollama pull qwen3:8b
@@ -58,6 +63,16 @@ models:
   #     model: gpt-4.1
   #     api_key_env: OPENAI_API_KEY                # name of the environment variable that holds the key
   #     context_tokens: 128000
+
+# --- S10/S11: when is an answer ACCEPTED (never a model confidence) ----------------------------
+acceptance:
+  profile: standard                  # strict | standard | lenient
+  risk_relevance_ratio: 0.5          # a damaged region blocks "not found" when its relevance reaches this share of the best evidence
+  semantic_check: false              # audit each answer with models.verification before accepting it
+  require_qualification: false       # cap results at `uncertain` unless `eval --acceptance --qualify` recorded this model + settings
+  # block: [quote_in_other_passage]  # extra finding categories that block
+  # allow: [quote_approximate]       # categories that never block
+  qualification: {min_tasks: 20, min_accepted_precision: 0.95, max_false_absence_rate: 0.02}
 
 # --- S07 value extraction behaviour (which model is models.extraction above) -------------------
 extraction:

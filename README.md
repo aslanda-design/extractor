@@ -74,7 +74,12 @@ python -m extractor eval --extraction --profile light,standard,deep --config run
 python -m extractor eval --extraction --kinds value --tags split:test   # only some field types / case tags
 python -m extractor eval --extraction --cases business_01,business_05   # only some extraction projects (cases)
 
-# 8. Run the whole engine (S01-S04, S06 and S07 real; interpretation and records are stubs returning `failed`)
+# 8. Measure what the engine ACCEPTS (S10/S11): automation, accepted-answer precision, false accepts / absences
+python -m extractor eval --acceptance --save runs/a1 --config runtime.yaml     # runs everything, stores each proposal
+python -m extractor eval --acceptance --from runs/a1 --config runtime.yaml     # re-runs only validation: no model, seconds
+python -m extractor eval --acceptance --from runs/a1 --qualify                 # write a qualification record if the thresholds are met
+
+# 9. Run the whole engine (S01-S04, S06, S07, S10 and S11 real; interpretation and records are stubs returning `failed`)
 python -m extractor run examples/spec.example.yaml --docs contract.pdf --profile standard
 ```
 
@@ -143,7 +148,9 @@ models:
   extraction:                    # the model that reads the evidence (S07). "fake" = no model: tasks end `failed`
     name: ollama_chat            # local Ollama; or "openai_compatible_chat" for any hosted / vLLM / LM Studio endpoint
     params: {model: "qwen3:8b", context_tokens: 16384}
-  # interpretation / verification: "fake" for now
+  verification:                  # optional semantic check at S10 (acceptance.semantic_check); may be a bigger model
+    name: fake                   # or ollama_chat / openai_compatible_chat, same params as extraction
+  # interpretation: "fake" for now
 
 indexing:
   chunking: {max_tokens: 350, min_tokens: 40}   # S04 passage size rules (tokens of the embedding model)
@@ -156,6 +163,15 @@ extraction:                                     # S07 knobs (WHICH model is mode
   choose_with_model: true       # the model applies the task precedence rules to conflicting values
   unresolved_references_block_absence: true   # "see Section 9" (inside the document) that cannot be found keeps an empty answer `uncertain`
   unresolved_attachments_block_absence: false # "Schedule A" / "Exhibit 3" missing from the supplied files does not block `not_found`
+
+acceptance:                                     # S10/S11: when is an answer ACCEPTED (never a model confidence)
+  profile: standard             # strict | standard | lenient (see "How validation and acceptance work")
+  risk_relevance_ratio: 0.5     # a damaged region blocks "not found" when its relevance reaches this share of the best evidence
+  semantic_check: false         # ask models.verification to audit each answer before accepting it
+  require_qualification: false  # cap results at `uncertain` unless this model + settings are qualified on your corpus
+  # block: [quote_in_other_passage]     # extra finding categories that block
+  # allow: [quote_approximate]          # categories that never block
+  qualification: {min_tasks: 20, min_accepted_precision: 0.95, max_false_absence_rate: 0.02}
 
 retrieval:                                      # S06 depth of extraction
   profile: standard                             # light | standard | deep | your own
@@ -219,6 +235,7 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `indexing/stores/` | S04 | Pluggable databases: `base.py` interfaces (`LexicalIndex`, `VectorStore`), `sqlite_fts5.py` (BM25), `numpy_store.py` (exact cosine). | New database: subclass + register in `stores/__init__.py` |
 | `retrieval/` | S06 | **`retrieval_pipeline.py` is the whole evidence-retrieval pipeline in one readable file** (queries -> candidates -> fusion -> rerank -> selection -> expansion -> packaging). Helpers: `queries.py`, `candidates.py`, `fusion.py`, `rerank.py`, `selection.py`, `definitions.py`, `expansion.py`, `packaging.py`; `report.py` prints a run's trace. | Retrieval behaviour: `retrieval_pipeline.py` and its helper; depth: `retrieval.profile(s)` in the runtime config |
 | `extraction/` | S07 | **`value_pipeline.py` is the whole value-extraction pipeline in one readable file** (tag passages -> split by context -> ask the model -> read candidates and locate their quotes -> normalize -> derive -> reconcile -> conclude). Helpers: `prompts.py` (what the model is told), `schema.py` (JSON schema it must follow), `partition.py`, `reading.py`, `quotes.py`, `normalize.py` (dates, numbers, amounts by code), `derivation.py` (arithmetic by code, only when the task allows), `reconcile.py`, `choosing.py` (precedence rules), `calling.py`, `report.py` | Behaviour: `value_pipeline.py` and its helper; wording: `prompts.py`; model: `models.extraction` in the runtime config |
+| `validation/` | S10, S11 | **`validation_pipeline.py` is the whole validation and acceptance stage in one readable file** (structure -> grounding -> normalization -> consistency -> coverage / risk register -> optional semantic check -> qualification -> policy -> decision). Helpers: `structure.py`, `grounding.py`, `numeric.py`, `consistency.py`, `coverage_check.py`, `semantic.py`, `policy.py` (profiles), `qualification.py`, `findings.py` | Behaviour: `validation_pipeline.py` and the layer it calls; which findings block: `policy.py` or `acceptance:` in the runtime config |
 | `pipeline/` | all | **`extraction_pipeline.py` is the whole engine in one readable file**: S01-S13 as numbered calls, real or marked STUB. Each phase turns its STUB line into a call. | `extraction_pipeline.py` |
 | `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing (`parsing_eval.py`), chunking (`indexing_eval.py`), retrieval (`retrieval_eval.py`) and value-extraction (`extraction_eval.py`) quality. | `corpus.py` for the label format |
 | `events.py` | all | Activity log every stage writes to (`emit`, `step`, `progress`, `run_scope`); the UI Logs tab and progress strip read it. | New stage: log each numbered step |
@@ -311,6 +328,41 @@ neighbours, reference / definition / qualifier switches, short-document limit, p
 your own under `retrieval.profiles` (optionally `extends:` another one). These are runtime
 settings; they cannot appear in the task YAML.
 
+### How validation and acceptance work (S10, S11)
+
+Open `src/extractor/validation/validation_pipeline.py`: `validate_and_accept` lists the steps in order. The input is the
+S07 proposal; the output is the status of the task with plain-language reasons.
+
+1. **Structure:** the value has the declared type, allowed label and cardinality.
+2. **Source grounding:** the cited blocks exist, the quote was found in the evidence, the value is in the quote.
+3. **Normalization:** the canonical value still means what the quote says: a dropped scale word ("NTD 12 million" read as
+   12) or an amount written two ways that disagree ("1.2 million (SAY ONE MILLION AND TWENTY THOUSAND ONLY)") blocks.
+4. **Consistency:** `depends_on` tasks were accepted, the value is not redacted, discarded candidates are listed.
+5. **Coverage (the risk register):** for a "not found" answer the engine lists everything that could hide the value:
+   unresolved parsing issues, passages left out for the budget, failed calls, unresolved references. A parsing issue is
+   scored for relevance to THE TASK with the reranker applied only to the damaged passages: a damaged fee table blocks
+   "not found" for a fee question and not for a name question, so cost follows the damage, never the document size, and
+   no model tokens are spent. A relevant risk makes the task `uncertain` and records a recovery hint (reparse that
+   page, inspect those passages) for the future recovery stage. Pages that stayed empty after the whole OCR retry
+   ladder count as blank (information).
+6. **Semantic support (optional):** `acceptance.semantic_check` asks `models.verification` (it may be a bigger model than the
+   extractor) to audit the one answer about to be accepted. Its answer is a finding, never proof; a failed call is reported.
+7. **Qualification (optional):** `eval --acceptance --qualify` writes a record when your corpus metrics reach
+   `acceptance.qualification`; `acceptance.require_qualification` then caps unqualified model + settings at `uncertain`.
+8. **Policy:** the profile decides which findings block. `strict`: any doubt (rejected candidates, quote in another passage,
+   problems on the cited page, blank pages, missing attachments). `standard` (default): grounding, normalization,
+   consistency, relevant coverage risks, semantic failures. `lenient`: standard minus approximate quotes and minus
+   unresolved references inside the document. `acceptance.block` / `acceptance.allow` change single categories.
+9. **Decision:** a found answer with nothing blocking is `supported`; with something blocking it is `uncertain` (the value
+   goes to `alternatives`); an absent answer is the task's `on_absent` only if the inspection was complete, else `uncertain`.
+
+A quote the model did not copy verbatim is not simply rejected: if the VALUE is in the cited passage its blocks are cited and
+the finding `quote_relocated` is recorded (information for `standard`, blocking for `strict`).
+
+Retrieval scores and model confidence are never used to accept: on the labeled corpus neither separated right answers from
+wrong ones. `python -m extractor eval --acceptance` reports automation rate, accepted-answer precision, false accepts,
+false absences and the blocking findings; `--save` / `--from` make tuning a profile a matter of seconds.
+
 ### How value extraction works (S07)
 
 Open `src/extractor/extraction/value_pipeline.py`: `extract_value` lists the steps in order.
@@ -380,6 +432,9 @@ expected answers). Start from `evaluation/corpus/_template/` and read
   labeled value task and reports, per profile: correct, wrong (and wrong-but-cited: the labeled quote was in
   the passage the value came from), abstained (`uncertain`), **false absence** (said absent, the label has a
   value), **false value** (invented one where the label says `not_found`), failed, seconds per task.
+- `python -m extractor eval --acceptance [--save DIR | --from DIR] [--qualify]` runs the labeled value tasks through S06, S07 and
+  S10/S11 and reports, per profile: automation rate (share `supported`), **accepted-answer precision**, false accepts,
+  false absences, over-abstention (the proposal was right but acceptance blocked it) and the blocking findings.
 - `python -m extractor eval --score` scores full engine output (status and value accuracy).
 
 ## 6. Rules of the codebase
@@ -388,7 +443,7 @@ expected answers). Start from `evaluation/corpus/_template/` and read
 - The YAML says *what*; `RuntimeConfig` says *which model / limits*. Never mix them.
 - Heavy libraries are imported only inside `parsing/backends/*`, the embedding adapters and the store modules, and load lazily.
 - Every pipeline is ONE readable `*_pipeline.py` file with numbered steps calling helpers in their own
-  modules (`chunking_pipeline.py`, `retrieval_pipeline.py`, `value_pipeline.py`, and the whole engine in `extraction_pipeline.py`).
+  modules (`chunking_pipeline.py`, `retrieval_pipeline.py`, `value_pipeline.py`, `validation/validation_pipeline.py`, and the whole engine in `extraction_pipeline.py`).
   Models, databases and depth are never hard-coded in them.
 - Everything crossing a stage boundary is a type from `contracts/`.
 - Update ARCHITECTURE.md when a contract changes, and PROGRESS.md as phases complete.

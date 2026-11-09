@@ -277,7 +277,8 @@ tr.dim td{color:var(--muted)}
     <div id="corpusCases" style="margin-top:8px"></div>
     <div class="row" style="margin-top:10px"><button class="btn" id="corpusParse">Measure parsing quality</button>
       <button class="btn" id="corpusIndex">Measure chunking quality</button>
-      <button class="btn" id="corpusExtract">Measure value extraction</button></div>
+      <button class="btn" id="corpusExtract">Measure value extraction</button>
+      <button class="btn" id="corpusAccept">Measure acceptance</button></div>
     <div id="corpusResult" style="margin-top:12px"></div>
     <div id="corpusHistory" style="margin-top:18px"></div>
   </div>
@@ -537,6 +538,27 @@ const EXTRACT_HELP = {
   think_extraction: 'Let the model reason before listing candidates (slower, more accurate)',
   think_verification: 'Let the model reason when verifying candidates', think_choice: 'Let the model reason when applying precedence rules',
 };
+const ACCEPT_HELP = {
+  risk_relevance_ratio: 'A damaged region blocks "not found" when its relevance to the task reaches this share of the best evidence (0-1)',
+  semantic_check: 'S10: ask the verification model to audit each answer before accepting it', think_semantic: 'Let it reason first (slower)',
+  require_qualification: 'Cap results at uncertain unless this model + settings were qualified on your corpus (Corpus tab)',
+  block: 'Finding categories that also block (comma separated)', allow: 'Finding categories that never block (comma separated)',
+  min_tasks: 'Qualification: tasks needed', min_accepted_precision: 'Qualification: share of accepted answers that must be right (0-1)',
+  max_false_absence_rate: 'Qualification: allowed share of tasks wrongly called not_found (0-1)',
+};
+function acceptanceForm(a, opts) {
+  const yn = (k, v) => `<label>${k}<select data-ac="${k}"><option value="true" ${v === true ? 'selected' : ''}>yes</option><option value="false" ${v === true ? '' : 'selected'}>no</option></select><small>${ACCEPT_HELP[k] || ''}</small></label>`;
+  const q = a.qualification;
+  return `<label>acceptance profile<select data-ac="profile">${opts.acceptance_profiles.map(p => `<option ${p === a.profile ? 'selected' : ''}>${p}</option>`).join('')}</select>
+      <small>strict: any doubt blocks · standard: grounding, normalization, consistency, relevant coverage risks · lenient: also accepts approximate quotes and unresolved references</small></label>` +
+    `<label>risk_relevance_ratio<input data-ac="risk_relevance_ratio" type="number" step="any" value="${a.risk_relevance_ratio}"><small>${ACCEPT_HELP.risk_relevance_ratio}</small></label>` +
+    yn('semantic_check', a.semantic_check) +
+    `<label>think_semantic<select data-ac="think_semantic"><option value="" ${a.think_semantic == null ? 'selected' : ''}>adapter default</option><option value="true" ${a.think_semantic === true ? 'selected' : ''}>yes</option><option value="false" ${a.think_semantic === false ? 'selected' : ''}>no</option></select><small>${ACCEPT_HELP.think_semantic}</small></label>` +
+    yn('require_qualification', a.require_qualification) +
+    `<label>block (extra categories)<input data-ac="block" value="${esc(a.block.join(', '))}"><small>${ACCEPT_HELP.block}</small></label>` +
+    `<label>allow (never block)<input data-ac="allow" value="${esc(a.allow.join(', '))}"><small>${ACCEPT_HELP.allow}</small></label>` +
+    ['min_tasks', 'min_accepted_precision', 'max_false_absence_rate'].map(k => `<label>${k}<input data-acq="${k}" type="number" step="any" value="${q[k]}"><small>${ACCEPT_HELP[k]}</small></label>`).join('');
+}
 const jsonText = o => JSON.stringify(o ?? {});
 async function loadConfig() {
   cfg = await api('/config'); const opts = await api('/options');
@@ -554,6 +576,9 @@ async function loadConfig() {
     `<label>embedding params (JSON)<input id="cfgEmbParams" value="${esc(jsonText(cfg.models.embedding.params))}"><small>e.g. {"model": "Qwen/Qwen3-Embedding-0.6B", "device": "auto"}</small></label>` +
     sel('cfgRerName', 'reranker adapter', opts.reranking, cfg.models.reranking.name) +
     `<label>reranker params (JSON)<input id="cfgRerParams" value="${esc(jsonText(cfg.models.reranking.params))}"><small>e.g. {"model": "tomaarsen/Qwen3-Reranker-0.6B-seq-cls"}</small></label>` +
+    sel('cfgVerName', 'verification model adapter (semantic check)', opts.verification, cfg.models.verification.name) +
+    `<label>verification model params (JSON)<input id="cfgVerParams" value="${esc(jsonText(cfg.models.verification.params))}"><small>a different (bigger) model than the extractor is allowed</small></label>` +
+    acceptanceForm(cfg.acceptance, opts) +
     sel('cfgExtName', 'extraction model adapter', opts.extraction, cfg.models.extraction.name) +
     `<label>extraction model params (JSON)<input id="cfgExtParams" value="${esc(jsonText(cfg.models.extraction.params))}"><small>e.g. {"model": "qwen3:8b", "context_tokens": 16384} (ollama_chat) or {"base_url": "...", "model": "...", "api_key_env": "..."} (openai_compatible_chat)</small></label>` +
     Object.entries(cfg.extraction).map(([k, v]) => ex(k, v)).join('') +
@@ -585,6 +610,11 @@ $('#cfgSave').onclick = async () => {
     const k = el.dataset.ck, v = el.value;
     next.indexing.chunking[k] = v === 'true' ? true : v === 'false' ? false : Number(v);
   });
+  document.querySelectorAll('#idxForm [data-ac]').forEach(el => {
+    const k = el.dataset.ac, v = el.value, list = x => x.split(',').map(t => t.trim()).filter(Boolean);
+    next.acceptance[k] = ['block', 'allow'].includes(k) ? list(v) : k === 'profile' ? v : v === 'true' ? true : v === 'false' ? false : v === '' ? null : Number(v);
+  });
+  document.querySelectorAll('#idxForm [data-acq]').forEach(el => { next.acceptance.qualification[el.dataset.acq] = Number(el.value); });
   document.querySelectorAll('#idxForm [data-ex]').forEach(el => {
     const k = el.dataset.ex, v = el.value;
     next.extraction[k] = v === 'true' ? true : v === 'false' ? false : v === '' ? null : Number(v);
@@ -594,6 +624,7 @@ $('#cfgSave').onclick = async () => {
     next.models.embedding = {name: $('#cfgEmbName').value, params: parse('#cfgEmbParams')};
     next.models.reranking = {name: $('#cfgRerName').value, params: parse('#cfgRerParams')};
     next.models.extraction = {name: $('#cfgExtName').value, params: parse('#cfgExtParams')};
+    next.models.verification = {name: $('#cfgVerName').value, params: parse('#cfgVerParams')};
     next.retrieval.profile = $('#cfgProfile').value;
     next.indexing.lexical_store = {name: $('#cfgLexName').value, params: parse('#cfgLexParams')};
     next.indexing.vector_store = {name: $('#cfgVecName').value, params: parse('#cfgVecParams')};
@@ -616,7 +647,7 @@ async function loadHistory(presetKind) {
   if (!sel.options.length) {
     const kinds = {'': 'All runs', parse: 'Parse', index: 'Chunk & index', search: 'Index search', retrieve: 'Retrieve evidence',
       extract: 'Extract value', run: 'Run spec', 'corpus.': 'All corpus measures', 'corpus.parsing': 'Corpus · parsing',
-      'corpus.indexing': 'Corpus · chunking', 'corpus.extraction': 'Corpus · extraction'};
+      'corpus.indexing': 'Corpus · chunking', 'corpus.extraction': 'Corpus · extraction', 'corpus.acceptance': 'Corpus · acceptance'};
     sel.innerHTML = Object.entries(kinds).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join('');
   }
   if (typeof presetKind === 'string') sel.value = presetKind;
@@ -755,6 +786,20 @@ const CORPUS_RENDER = {
           <td>${pill(o.outcome.replace(/_/g, ' '), o.outcome === 'abstained' ? 'warn' : 'bad')}</td></tr>`; }).join('')}</tbody></table>` : ''}`;
   },
 };
+CORPUS_RENDER.acceptance = r => {
+  const pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
+  const val = v => typeof v === 'string' ? v : JSON.stringify(v);
+  return `<table><thead><tr><th>Profile</th><th>Tasks</th><th>Automation</th><th>Accepted precision</th><th>False accepts</th><th>False absences</th>
+    <th>Over-abstention</th><th>Sec/task</th></tr></thead><tbody>${r.rows.map(x => `<tr><td>${esc(x.profile)}</td><td>${x.tasks}</td><td>${pct(x.automation_rate)}</td>
+    <td>${pct(x.accepted_precision)}</td><td>${x.counts.false_accept || 0}</td><td>${x.counts.false_absence || 0}</td><td>${x.counts.over_abstention || 0}
+    ${x.counts.proposal_right ? `<small>(${x.counts.proposal_right} had the right value)</small>` : ''}</td><td>${x.mean_seconds.toFixed(1)}</td></tr>`).join('')}</tbody></table>
+    <p class="hint">Automation = share of tasks the engine accepts as <b>supported</b>. Accepted precision = share of those that are right. A false accept or a false absence is the error that matters.</p>
+    ${r.rows.map(x => Object.keys(x.categories).length ? `<p><b>Blocking findings (${esc(x.profile)}):</b> ${Object.entries(x.categories).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span class="chip">${esc(k)} ×${n}</span>`).join(' ')}</p>` : '').join('')}
+    ${r.misses.length ? `<h2 style="margin-top:14px">Not right (${r.misses.length})</h2><table><thead><tr><th>Business id</th><th>Field id</th><th>Expected</th><th>Engine</th><th>Why</th><th></th></tr></thead><tbody>${r.misses.map(o => `<tr>
+      <td>${esc(o.case_id)}</td><td><code>${esc(o.task_id)}</code></td><td>${esc(val(o.expected))}</td>
+      <td>${pill(o.status, o.status === 'supported' ? 'bad' : 'warn')} ${o.value != null ? esc(val(o.value)) : o.proposal_value != null ? '<i>proposed ' + esc(val(o.proposal_value)) + '</i>' : ''}</td>
+      <td><small>${esc((o.reasons || []).slice(0, 2).join(' · '))}</small></td><td>${pill(o.outcome.replace(/_/g, ' '), ['false_accept', 'false_absence'].includes(o.outcome) ? 'bad' : 'warn')}</td></tr>`).join('')}</tbody></table>` : ''}`;
+};
 function showCorpusResult(measure, r, meta) {
   const when = meta
     ? `<p class="hint">${esc(meta.label)} · ${esc(meta.finished_at.replace('T', ' '))} · ${esc(meta.subject)}${meta.settings && meta.settings.retrieval_profile ? ` · profile ${esc(meta.settings.retrieval_profile)}, model ${esc(meta.settings.extraction || '')}` : ''}</p>` : '';
@@ -792,6 +837,15 @@ async function runCorpusMeasure(e, measure, label, body) {
 }
 $('#corpusParse').onclick = e => runCorpusMeasure(e, 'parsing', 'Measuring…');
 $('#corpusIndex').onclick = e => runCorpusMeasure(e, 'indexing', 'Measuring…');
+$('#corpusAccept').onclick = e => {
+  const kinds = [...document.querySelectorAll('#corpusFilters input[name=kind]:checked')].map(x => x.value);
+  const cases = [...document.querySelectorAll('#corpusCases input[name=case]:checked')].map(x => x.value);
+  if (document.querySelector('#corpusCases input[name=case]') && !cases.length) {
+    $('#corpusResult').innerHTML = '<div class="msg bad">select at least one extraction project to test</div>'; return;
+  }
+  const tags = $('#corpusSplit') && $('#corpusSplit').value ? [$('#corpusSplit').value] : [];
+  runCorpusMeasure(e, 'acceptance', 'Measuring (extraction + validation on every value task)…', {kinds, tags, cases});
+};
 $('#corpusExtract').onclick = e => {
   const kinds = [...document.querySelectorAll('#corpusFilters input[name=kind]:checked')].map(x => x.value);
   const cases = [...document.querySelectorAll('#corpusCases input[name=case]:checked')].map(x => x.value);
@@ -983,9 +1037,16 @@ function showProposal(r) {
     <div class="card"><h2>Result</h2>
       <p>${pill(r.outcome, OUTCOME_KIND[r.outcome])} <b style="font-size:16px">${r.value == null ? '—' : esc(JSON.stringify(r.value))}</b></p>
       <p>${esc(r.reason)}</p>
-      <p class="hint">Engine result for this task today: <b>${esc(r.would_be)}</b> · model ${esc(r.model)} · ${r.seconds}s in total
-        (retrieval ${r.evidence.seconds}s) · ${r.calls.length} model call(s)</p>
+      <p class="hint">Model ${esc(r.model)} · ${r.seconds}s in total (retrieval ${r.evidence.seconds}s) · ${r.calls.length} model call(s)</p>
       ${r.gaps.map(g => `<div class="msg warn">Gap: ${esc(g)}</div>`).join('')}</div>
+    <div class="card"><h2>Validation and decision ${pill(r.validation.status, {supported: 'ok', not_found: 'ok', uncertain: 'warn', failed: 'bad'}[r.validation.status])}
+        <span class="hint">${esc(r.validation.policy)} policy</span></h2>
+      ${r.validation.reasons.map(x => `<p style="margin:2px 0">${esc(x)}</p>`).join('')}
+      <p class="hint">The engine decides, not the model: <b>supported</b> = nothing blocking was found; <b>not_found</b> = nothing found and every risk that could hide it was inspected or irrelevant; <b>uncertain</b> = something blocks acceptance. A blocking finding stops acceptance under this policy; information findings are recorded only.</p>
+      ${r.validation.findings.length ? `<table><thead><tr><th>Layer</th><th>Finding</th><th></th><th>Message</th></tr></thead><tbody>${r.validation.findings.map(f => `<tr>
+        <td>${esc(f.layer.replace(/_/g, ' '))}</td><td><code>${esc(f.category)}</code></td><td>${pill(f.severity === 'material' ? 'blocks' : 'info', f.severity === 'material' ? 'bad' : '')}</td>
+        <td><small>${esc(f.message)}</small>${f.recovery ? `<br><small class="hint">recovery could: ${esc(f.recovery.action.replace(/_/g, ' '))}${f.recovery.page ? ' (page ' + f.recovery.page + ')' : ''}</small>` : ''}</td></tr>`).join('')}</tbody></table>`
+        : '<p class="hint">No findings: every layer passed.</p>'}</div>
     <div class="card"><h2>Candidates the model reported (${r.candidates.length})</h2>
       <p class="hint">Each quote is searched in the evidence by code; <b>chosen</b> marks the candidate behind the value. Values that agree after normalization are merged.</p>
       ${r.candidates.length ? `<table><thead><tr><th></th><th>Id</th><th>As written</th><th>Normalized</th><th>About / date / conditions</th><th>Flags</th><th>Quote</th></tr></thead><tbody>
@@ -1014,7 +1075,7 @@ function showProposal(r) {
 }
 
 /* ---------- logs (engine events, polled) ---------- */
-const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S06: 'retrieve', S07: 'extract', S13: 'result', eval: 'evaluate', ui: 'queue'};
+const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S06: 'retrieve', S07: 'extract', S10: 'validate', S11: 'accept', S13: 'result', eval: 'evaluate', ui: 'queue'};
 const RUNS = new Map();   // run id -> {id,title,start,end,failed,events:[],progress:{},open:{},stages:{}}
 let logSeq = 0, lastRunId = null;
 const openRuns = new Set();

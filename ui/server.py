@@ -39,6 +39,7 @@ class CorpusExtractBody(BaseModel):
     kinds: list[str] = []  # task kinds to score (empty = every implemented kind)
     tags: list[str] = []  # only cases having all these tags (e.g. split:test)
     cases: list[str] = []  # only these case ids (empty = all)
+    qualify: bool = False  # acceptance only: write a qualification record when the thresholds are met
 
 
 class ExtractBody(BaseModel):
@@ -191,6 +192,10 @@ def create_app(workspace_dir: Path) -> FastAPI:
     @app.post("/api/corpus/extraction")
     def corpus_extraction(body: CorpusExtractBody):
         return ws.corpus_extraction(body.kinds, body.tags, body.cases)
+
+    @app.post("/api/corpus/acceptance")
+    def corpus_acceptance(body: CorpusExtractBody):
+        return ws.corpus_acceptance(body.kinds, body.tags, body.cases, body.qualify)
 
     @app.post("/api/corpus/parsing")
     def corpus_parsing():

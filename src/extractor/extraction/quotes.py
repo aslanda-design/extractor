@@ -18,6 +18,11 @@ from .normalize import all_dates, all_numbers, normalize
 
 APPROXIMATE_RATIO = 0.85  # share of the quote that must match to accept a near copy
 
+# Quote marks and the replacement character are ignored on both sides: parsers often store curly quotes as U+FFFD
+# ("(\ufffdConsultant\ufffd)"), the model copies them as straight quotes, and one such mark in the middle of a quote
+# would otherwise split the match in two halves that are each too short to count.
+_IGNORED = set("\"'`\u201c\u201d\u201e\u2018\u2019\u00ab\u00bb\ufffd")
+
 _TRANSLATE = str.maketrans({"“": '"', "”": '"', "„": '"', "‘": "'", "’": "'", "–": "-", "—": "-", " ": " "})
 
 
@@ -36,6 +41,8 @@ def _fold(text: str) -> tuple[str, list[int]]:
     """Lowercased text with collapsed whitespace, plus the original offset of every kept character."""
     out, offsets, space = [], [], True
     for i, ch in enumerate(text.translate(_TRANSLATE)):
+        if ch in _IGNORED:
+            continue
         if ch.isspace():
             if not space:
                 out.append(" ")
@@ -73,17 +80,49 @@ def _blocks(passage: Passage, start: int, end: int) -> list[SourceRef]:
     return [SourceRef(document_id=passage.document_id, block_id=b) for b in seen]
 
 
-def locate_quote(quote: str | None, cited: Passage | None, others: list[Passage]) -> QuoteMatch:
-    """Where is `quote`? Searches the cited passage, then every other passage the model was shown."""
+def locate_quote(
+    quote: str | None, cited: Passage | None, others: list[Passage], literal: str | None = None, output_type: OutputType | None = None,
+) -> QuoteMatch:
+    """Where is `quote`? Searches the cited passage, then every other passage the model was shown.
+
+    An approximate match is harmless when the VALUE sits inside the matched region (the model only mis-copied words
+    around it), so it is not flagged. If the quote cannot be found at all but the value appears (once or twice) in the
+    cited passage, the value's own blocks are cited and the match is flagged `quote_relocated`: weaker than a verbatim
+    quote, so the strict profile blocks it, but it is still evidence in the document and not the model's invention.
+    """
     if not quote or not quote.strip():
         return QuoteMatch(flags=["no_quote"])
     for passage, flag in [(cited, None)] * (cited is not None) + [(p, "quote_in_other_passage") for p in others]:
         found = _search(passage, quote)
         if found:
             start, end, approximate = found
+            if approximate and literal and contains_value(passage.text[start:end], literal, output_type):
+                approximate = False
             flags = ([flag] if flag else []) + (["quote_approximate"] if approximate else [])
             return QuoteMatch(passage.passage_id, _blocks(passage, start, end), flags)
+    if literal and cited is not None:
+        refs = _blocks_of_value(cited, literal)
+        if refs:
+            return QuoteMatch(cited.passage_id, refs, ["quote_relocated"])
     return QuoteMatch(flags=["quote_not_located"])
+
+
+def _blocks_of_value(passage: Passage, literal: str) -> list[SourceRef]:
+    """The blocks holding the value in `passage`, when it occurs at most twice (otherwise we cannot tell which one)."""
+    haystack, offsets = _fold(passage.text)
+    needle = _fold(literal)[0].strip(" .")
+    if len(needle) < 2:
+        return []
+    spots, at = [], haystack.find(needle)
+    while at >= 0 and len(spots) < 3:
+        spots.append(at)
+        at = haystack.find(needle, at + 1)
+    if not 1 <= len(spots) <= 2:
+        return []
+    refs = []
+    for at in spots:
+        refs += _blocks(passage, offsets[at], offsets[min(at + len(needle), len(offsets)) - 1] + 1)
+    return list(dict.fromkeys(refs))
 
 
 def contains_value(quote: str | None, literal: str | None, output_type: OutputType | None = None) -> bool:
@@ -113,6 +152,22 @@ def with_scale_word(literal: str, quote: str | None, output_type: OutputType | N
     number = re.search(r"\d[\d.,]*", literal).group(0)
     found = re.search(re.escape(number) + r"\s*(thousand|million|billion|mn|bn)\b", quote, re.I)
     return f"{literal.strip()} {found.group(1)}" if found else literal
+
+
+_LEGAL_SUFFIX = (r"(?:S\.?\s?A\.?(?:\s?R\.?\s?L\.?)?|S\.?p\.?A\.?|S\.?L\.?|N\.?V\.?|B\.?V\.?|A\.?G\.?|G\.?m\.?b\.?H\.?|"
+                 r"Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?|Company|Ltd\.?|Limited|LLC|L\.L\.C\.|LLP|L\.P\.|LP|PLC|Pte\.?(?:\s+Ltd\.?)?|"
+                 r"Pty\.?(?:\s+Ltd\.?)?|GmbH|AB|AS|ASA|OY|K\.?K\.?|Sdn\.?\s+Bhd\.?)")
+
+
+def with_legal_suffix(literal: str, quote: str | None, output_type: OutputType | None) -> str:
+    """"Sanofi Pasteur" copied from "Sanofi Pasteur S.A., a company..." is the short form of the name: when the quote
+    continues it with a legal-form suffix (S.A., Inc., Ltd, GmbH...), the party's name includes it."""
+    if output_type not in (OutputType.STRING, OutputType.TEXT) or not quote or not literal.strip():
+        return literal
+    found = re.search(re.escape(literal.strip()) + r"[\s,]+(" + _LEGAL_SUFFIX + r")(?=[\s,;)]|$)", quote)
+    if not found or re.search(_LEGAL_SUFFIX + r"$", literal.strip(), re.I):
+        return literal
+    return f"{literal.strip()} {found.group(1)}"
 
 
 def normalized_values(text: str, output_type: OutputType) -> list:

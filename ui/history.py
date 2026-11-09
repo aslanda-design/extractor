@@ -20,6 +20,7 @@ KINDS = {
     "corpus.parsing": "Corpus · parsing",
     "corpus.indexing": "Corpus · chunking",
     "corpus.extraction": "Corpus · extraction",
+    "corpus.acceptance": "Corpus · acceptance",
 }
 
 
@@ -44,7 +45,7 @@ def subject(kind: str, params: dict) -> str:
         return f"“{_short((params.get('form') or {}).get('text'), 60)}” · {', '.join(params.get('documents') or [])}"
     if kind == "run":
         return f"{params.get('spec_name', '')} · {', '.join(params.get('documents') or [])}"
-    if kind == "corpus.extraction":
+    if kind in ("corpus.extraction", "corpus.acceptance"):
         cases = params.get("cases") or []
         kinds = params.get("kinds") or ["value"]
         tags = params.get("tags") or []
@@ -80,6 +81,12 @@ def headline(kind: str, result: dict | None) -> str:
             return f"quote recall {_pct(r['quote_recall'])}, right page {_pct(r['page_accuracy'])}"
         if kind == "corpus.indexing":
             return f"quotes in one passage {_pct(r['containment'])}"
+        if kind == "corpus.acceptance":
+            row = (r.get("rows") or [None])[0]
+            if not row:
+                return "no tasks"
+            return (f"{row['tasks']} tasks: automation {_pct(row['automation_rate'])}, accepted precision {_pct(row['accepted_precision'])}, "
+                    f"false accepts {row['counts'].get('false_accept', 0)}, false absences {row['counts'].get('false_absence', 0)}")
         if kind == "corpus.extraction":
             row = (r.get("rows") or [None])[0]
             if not row:

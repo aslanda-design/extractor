@@ -6,7 +6,7 @@ from pydantic import model_validator
 
 from .common import Completeness, EvidenceRole, SourceRef, StrictModel, TaskKind, TaskStatus
 from .record import Record
-from .validation import ValidationReport
+from .validation import AcceptanceDecision, ValidationReport
 
 
 class EvidenceLink(StrictModel):
@@ -34,6 +34,7 @@ class TaskResult(StrictModel):
     completeness: Completeness | None = None  # records tasks only
     evidence: list[EvidenceLink] = []
     validation: ValidationReport = ValidationReport()
+    acceptance: AcceptanceDecision | None = None  # why the engine gave this status (S11)
     alternatives: list[Any] = []  # tentative values live here, not in `value`
     diagnostics: list[str] = []  # technical errors, kept apart from uncertainty
     execution: ExecutionMetadata = ExecutionMetadata()

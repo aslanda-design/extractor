@@ -245,6 +245,18 @@ def cmd_eval(args: argparse.Namespace) -> int:
         tags = args.tags.split(",") if args.tags else None
         case_ids = args.cases.split(",") if args.cases else None
         print(evaluate_extraction(corpus, config, build_adapters(config, store), store, profiles, kinds, tags, case_ids).format())
+    if args.acceptance and corpus.cases:
+        from .evaluation.acceptance_eval import evaluate_acceptance
+
+        config = _real_config(args.config)
+        store = ArtifactStore(config.storage.artifact_dir)
+        profiles = args.profile.split(",") if args.profile else [config.retrieval.profile]
+        kinds = [TaskKind(k) for k in args.kinds.split(",")] if args.kinds else None
+        tags = args.tags.split(",") if args.tags else None
+        case_ids = args.cases.split(",") if args.cases else None
+        report = evaluate_acceptance(corpus, config, build_adapters(config, store), store, profiles, kinds, tags, case_ids,
+                                     save_dir=args.save, from_dir=args.from_dir, qualify=args.qualify)
+        print(report.format())
     if args.score and corpus.cases:
         report = run_corpus(corpus, load_runtime_config(args.config))
         print(f"status accuracy: {report.status_accuracy:.0%}  value accuracy: {report.value_accuracy}")
@@ -313,10 +325,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--indexing", action="store_true", help="measure chunk/quote containment on the corpus documents")
     p.add_argument("--retrieval", action="store_true", help="measure evidence recall of retrieval, with ablations")
     p.add_argument("--extraction", action="store_true", help="measure value extraction (correct / wrong / false absence...)")
+    p.add_argument("--acceptance", action="store_true", help="measure what the engine ACCEPTS (S10/S11): automation, precision, false accepts")
+    p.add_argument("--save", type=Path, help="--acceptance only: store every evidence package and proposal in this folder")
+    p.add_argument("--from", dest="from_dir", type=Path, help="--acceptance only: re-run validation on proposals saved with --save (no model calls)")
+    p.add_argument("--qualify", action="store_true", help="--acceptance only: write a qualification record when the thresholds in acceptance.qualification are met")
     p.add_argument("--profile", help="retrieval profile(s) to evaluate, comma separated (e.g. light,standard,deep)")
-    p.add_argument("--kinds", help="--extraction only: task kinds to score, comma separated (value,interpretation,records; default: all implemented)")
-    p.add_argument("--tags", help="--extraction only: only cases having ALL these tags, comma separated (e.g. split:test,digital)")
-    p.add_argument("--cases", help="--extraction only: only these case ids, comma separated (e.g. business_01,business_05)")
+    p.add_argument("--kinds", help="--extraction / --acceptance only: task kinds to score, comma separated (value,interpretation,records; default: all implemented)")
+    p.add_argument("--tags", help="--extraction / --acceptance only: only cases having ALL these tags, comma separated (e.g. split:test,digital)")
+    p.add_argument("--cases", help="--extraction / --acceptance only: only these case ids, comma separated (e.g. business_01,business_05)")
     p.add_argument("--variants", help="comma separated ablations (default: all): full,stage_one,no_rerank,...")
     p.add_argument("--config", type=Path, help="runtime config YAML")
     p.set_defaults(func=cmd_eval)

@@ -11,7 +11,7 @@ from ..contracts.candidate import Candidate
 from ..contracts.evidence import EvidencePassage
 from ..contracts.passage import Passage
 from ..contracts.task import OutputType
-from .quotes import contains_value, locate_quote, with_scale_word
+from .quotes import contains_value, locate_quote, with_legal_suffix, with_scale_word
 
 
 @dataclass
@@ -56,10 +56,10 @@ def read_reply(
 
         cited = tagged.get(str(item.get("passage") or ""))
         cited_passage = passages.get(cited.passage_id) if cited else None
-        match = locate_quote(item.get("quote"), cited_passage, [p for p in shown if p is not cited_passage])
+        match = locate_quote(item.get("quote"), cited_passage, [p for p in shown if p is not cited_passage], literal, output_type)
         flags = list(match.flags)
-        literal = with_scale_word(literal, item.get("quote"), output_type)
-        if match.located and not contains_value(item.get("quote"), literal, output_type):
+        literal = with_legal_suffix(with_scale_word(literal, item.get("quote"), output_type), item.get("quote"), output_type)
+        if match.located and "quote_relocated" not in flags and not contains_value(item.get("quote"), literal, output_type):
             flags.append("value_not_in_quote")
         reading.candidates.append(Candidate(
             candidate_id=engine_id, source_value=literal, quote=str(item.get("quote") or "") or None,

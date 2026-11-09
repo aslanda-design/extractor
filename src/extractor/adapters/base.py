@@ -158,13 +158,10 @@ class InterpreterAdapter(Adapter):
     ) -> InterpretationProposal: ...
 
 
-class VerifierAdapter(Adapter):
-    capability = Capability.VERIFICATION
+class VerifierAdapter(ExtractorAdapter):
+    """The model behind the optional semantic check (S10). Same contract as the extractor: prompt + schema -> JSON.
 
-    @abstractmethod
-    def verify(
-        self,
-        task: TaskSpecification,
-        proposal: Candidate | InterpretationProposal,
-        evidence: EvidencePackage,
-    ) -> list[ValidationFinding]: ...
+    `models.verification` can name a different (bigger) model than `models.extraction`; the same chat adapters
+    (`ollama_chat`, `openai_compatible_chat`) are registered for both capabilities."""
+
+    capability = Capability.VERIFICATION
