@@ -41,6 +41,45 @@ models:
   #   name: http_rerank
   #   params: {base_url: https://api.cohere.com/v2, model: rerank-v3.5, api_key_env: COHERE_API_KEY}
 
+  # --- swap: the model that reads the evidence and answers (S07) ---------------------------
+  extraction:
+    name: ollama_chat                # local Ollama:  ollama pull qwen3:8b
+    params:
+      model: "qwen3:8b"
+      base_url: http://localhost:11434
+      context_tokens: 16384          # sent as num_ctx; evidence that does not fit is split into several calls
+      # max_output_tokens: 1024   temperature: 0   think: false   timeout: 600
+  #
+  # Production alternative: any OpenAI-compatible chat endpoint (hosted API, vLLM, LM Studio...)
+  # extraction:
+  #   name: openai_compatible_chat
+  #   params:
+  #     base_url: https://api.openai.com/v1        # or http://my-vllm-host:8000/v1
+  #     model: gpt-4.1
+  #     api_key_env: OPENAI_API_KEY                # name of the environment variable that holds the key
+  #     context_tokens: 128000
+
+# --- S07 value extraction behaviour (which model is models.extraction above) -------------------
+extraction:
+  max_candidates: 8                  # values the model may report per call
+  retries: 1                         # extra attempts when a call fails or returns unusable JSON
+  prompt_margin: 0.1                 # share of the context left free (token counts are estimates)
+  choose_with_model: true            # the model applies the task precedence rules to conflicting values
+  unresolved_references_block_absence: true   # "see Section 9" (inside the document) that cannot be found keeps an empty answer `uncertain`
+  unresolved_attachments_block_absence: false # "Schedule A" / "Exhibit 3" missing from the supplied files does NOT block "not found"
+
+# Extraction depth per retrieval profile (deep already turns thinking on; add your own profiles here)
+# extraction_profiles:
+#   standard: {think_verification: true}
+#   deep: {passages_per_call: 1}
+  screen_candidates: true            # code gates: redacted, value not in its quote, blank field, unreadable typed value
+  verify_candidates: true            # one extra model call removes candidates that do not answer THE FIELD
+  # passages_per_call: 1             # one focused call per passage (more calls, more recall)
+  # think_extraction: true           # let the model reason before answering (slower, more accurate)
+  # think_verification: true
+  # think_choice: true
+  allow_unlocated_quotes: true       # keep (flagged) candidates whose quote is not in the evidence when nothing better exists
+
 indexing:
   chunking:                          # S04 passage rules (sizes in tokens of the embedding model)
     max_tokens: 350

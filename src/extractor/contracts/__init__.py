@@ -7,7 +7,8 @@ One file per contract family:
     specification.py  YAML file + compiled output (S02)
     document.py       DocumentRepresentation      (S03/S04)
     evidence.py       EvidencePackage             (S06)
-    candidate.py      Candidate / interpretation  (S07/S08)
+    candidate.py      Candidate / ValueProposal / interpretation  (S07/S08)
+    generation.py     ModelPrompt / ModelReply    (S07+)
     passage.py        Passage / IndexedDocument   (S04)
     record.py         Record                      (S09)
     coverage.py       CoverageLedger              (S04+)
@@ -15,7 +16,7 @@ One file per contract family:
     result.py         TaskResult                  (S13)
 """
 
-from .candidate import Candidate, InterpretationProposal
+from .candidate import Candidate, InterpretationProposal, ModelCall, ProposalOutcome, ValueProposal
 from .common import (
     Completeness,
     EvidenceRole,
@@ -26,6 +27,7 @@ from .common import (
     TaskStatus,
 )
 from .coverage import CoverageEntry, CoverageLedger, CoverageState
+from .generation import ModelPrompt, ModelReply
 from .document import DocumentRepresentation, ParsingIssue, SourceBlock
 from .evidence import EvidenceItem, EvidenceOrigin, EvidencePackage, EvidencePassage, RetrievalTrace
 from .manifest import DocumentEntry, DocumentManifest, DocumentRelationship, Scope
@@ -37,7 +39,7 @@ from .task import TaskSpecification
 from .validation import ValidationFinding, ValidationReport
 
 __all__ = [
-    "Candidate", "InterpretationProposal", "Completeness", "EvidenceRole", "MutableModel",
+    "Candidate", "InterpretationProposal", "ModelCall", "ModelPrompt", "ModelReply", "ProposalOutcome", "ValueProposal", "Completeness", "EvidenceRole", "MutableModel",
     "SourceRef", "StrictModel", "TaskKind", "TaskStatus", "CoverageEntry", "CoverageLedger",
     "CoverageState", "DocumentRepresentation", "ParsingIssue", "SourceBlock", "EvidenceItem",
     "EvidencePackage", "DocumentEntry", "DocumentManifest", "DocumentRelationship", "Scope",

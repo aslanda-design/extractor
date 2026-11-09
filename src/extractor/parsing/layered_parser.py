@@ -15,6 +15,7 @@ from ..adapters.base import AdapterCapabilities, AdapterContext, ModelIdentity, 
 from ..artifacts.fingerprint import fingerprint
 from ..contracts.document import DocumentRepresentation
 from ..contracts.manifest import DocumentEntry
+from ..events import emit, step
 from .backends.base import NativeBackend, OcrBackend, PageRenderer, ReferenceTextBackend
 from .parsing_pipeline import parse_document
 
@@ -99,12 +100,15 @@ class LayeredParser(ParserAdapter):
         if store and config.use_cache:
             cached = store.get_model("parsed", key, DocumentRepresentation)
             if cached is not None:
+                emit("S03", f"{entry.filename}: parsed earlier, reusing the cache ({len(cached.pages)} page(s))", "ok")
                 return cached
 
-        native, ocr, renderer, reference = self._backends()
-        representation, extraction = parse_document(
-            entry.document_id, source_path, entry.format, config, native, ocr, renderer, reference
-        )
+        with step("S03", f"loading the parsing models for {entry.filename}"):
+            native, ocr, renderer, reference = self._backends()
+        with step("S03", f"parsing {entry.filename}"):
+            representation, extraction = parse_document(
+                entry.document_id, source_path, entry.format, config, native, ocr, renderer, reference
+            )
         if store:
             if extraction is not None:
                 store.put("raw_parse", key, {"backend": native.name, "raw": extraction.raw})

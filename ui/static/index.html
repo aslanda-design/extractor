@@ -55,6 +55,34 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;max-height
 .bar.budget{width:200px}.bar.budget>i.over{background:var(--bad)}
 tr.dim td{color:var(--muted)}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:start}
+
+/* activity strip + logs */
+#strip{position:sticky;top:49px;z-index:4;background:var(--card);border-bottom:1px solid var(--line);padding:6px 20px;display:none;align-items:center;gap:14px;flex-wrap:wrap;font-size:13px}
+#strip.on{display:flex}
+#strip .title{font-weight:600}
+#strip .pbar{flex:1;min-width:140px;max-width:340px;height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+#strip .pbar>i{display:block;height:8px;background:var(--accent);transition:width .25s}
+#strip .pbar.indet>i{width:35%!important;animation:ind 1.1s ease-in-out infinite alternate}
+@keyframes ind{from{margin-left:0}to{margin-left:65%}}
+#strip a{color:var(--accent);cursor:pointer}
+.stages{display:flex;gap:4px;flex-wrap:wrap}
+.stg{padding:1px 8px;border-radius:4px;font-size:11px;border:1px solid var(--line);color:var(--muted);background:var(--bg)}
+.stg.running{border-color:var(--accent);color:var(--accent);font-weight:600}
+.stg.done{background:var(--okbg);color:var(--ok);border-color:transparent}
+.stg.error{background:var(--badbg);color:var(--bad);border-color:transparent}
+.run{border:1px solid var(--line);border-radius:8px;margin-bottom:12px;overflow:hidden;background:var(--card)}
+.run>.head{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 14px;cursor:pointer;background:var(--bg)}
+.run>.head .grow{min-width:200px}
+.run.live{border-color:var(--accent)}
+.lines{font:12px/1.5 ui-monospace,Consolas,monospace;max-height:420px;overflow:auto;padding:4px 0}
+.ln{display:flex;gap:10px;padding:1px 14px}
+.ln:hover{background:var(--bg)}
+.ln .t{color:var(--muted);min-width:52px;text-align:right}
+.ln .st{min-width:34px;color:var(--accent)}
+.ln.ok .m{color:var(--ok)}.ln.warn .m{color:var(--warn)}.ln.error .m{color:var(--bad);font-weight:600}.ln.debug .m{color:var(--muted)}
+.ln.start .m::before{content:'\25B6 ';color:var(--muted)}
+.mini{display:inline-block;width:90px;height:6px;background:var(--line);border-radius:3px;vertical-align:middle;margin:0 6px}
+.mini>i{display:block;height:6px;background:var(--accent);border-radius:3px}
 </style>
 </head>
 <body>
@@ -63,12 +91,19 @@ tr.dim td{color:var(--muted)}
   <nav id="nav">
     <button data-tab="docs" class="active">Documents</button>
     <button data-tab="retr">Retrieval</button>
+    <button data-tab="extr">Extraction</button>
     <button data-tab="spec">Specification</button>
     <button data-tab="run">Run</button>
     <button data-tab="settings">Settings</button>
     <button data-tab="corpus">Corpus</button>
+    <button data-tab="history">History</button>
+    <button data-tab="logs">Logs</button>
   </nav>
 </header>
+<div id="strip"><span id="stripSpin" class="spin"></span><span class="title" id="stripTitle"></span>
+  <div class="stages" id="stripStages"></div>
+  <div class="pbar" id="stripBar"><i style="width:0"></i></div><span id="stripText" class="hint" style="margin:0"></span>
+  <a id="stripLink">Open logs</a></div>
 <main>
 
 <!-- ============ DOCUMENTS ============ -->
@@ -127,6 +162,40 @@ tr.dim td{color:var(--muted)}
   <div id="retrOut"></div>
 </section>
 
+<!-- ============ EXTRACTION ============ -->
+<section id="extr">
+  <div class="card">
+    <h2>Extract a value</h2>
+    <p class="hint">Ask one question about the selected documents. The engine retrieves the evidence (S06) and the model lists every value the passages state, with a quote for each; code then normalizes, merges and reconciles them (S07). Nothing is validated or accepted yet (phase 6), so a found value is shown as a proposal.</p>
+    <div class="row" id="extrDocs" style="margin-bottom:10px"></div>
+    <textarea id="extrText" style="min-height:70px;font:inherit" placeholder="e.g. What is the current maturity date of the loan?"></textarea>
+    <div class="grid" style="margin:10px 0">
+      <label>Answer type<select id="extrType">
+        <option>string</option><option>text</option><option>number</option><option>integer</option><option>boolean</option>
+        <option>date</option><option>amount</option></select></label>
+      <label>How many answers<select id="extrCard"><option value="one">one</option><option value="many">several</option></select></label>
+      <label>If nothing is found<select id="extrAbsent"><option value="not_found">not_found</option><option value="uncertain">uncertain</option></select></label>
+      <label>Entity (optional)<input id="extrEntity" placeholder="e.g. the Borrower"></label>
+      <label>Time scope (optional)<input id="extrTime" placeholder="e.g. current"></label>
+      <label>Depth (profile)<select id="extrProfile"></select></label>
+    </div>
+    <details style="margin-bottom:10px"><summary>Allowed answers (optional: the value must be one of these)</summary>
+      <textarea id="extrLabels" style="min-height:70px;font:inherit" placeholder="one per line:  name: what it means"></textarea></details>
+    <details style="margin-bottom:10px"><summary>Rules (optional)</summary>
+      <div class="grid" style="margin-top:8px">
+        <label>Precedence, one rule per line (decides between conflicting values)<textarea id="extrPrecedence" style="min-height:70px;font:inherit" placeholder="A later amendment overrides the original agreement."></textarea></label>
+        <label>Normalization hint<input id="extrNormalization" placeholder="Convert to ISO-8601"></label>
+        <label>Ambiguity<input id="extrAmbiguity" placeholder="what to do when the evidence is ambiguous"></label>
+        <label>Derivation (empty = calculating is NOT allowed)<input id="extrDerivation" placeholder="e.g. the number of days between two stated dates"></label>
+      </div></details>
+    <details style="margin-bottom:12px"><summary>Load a value task from a specification</summary>
+      <div class="row" style="margin-top:8px"><select id="extrSpec"></select><select id="extrTask" class="grow"></select>
+        <button class="btn ghost" id="extrUse">Use this task</button></div></details>
+    <div class="row"><button class="btn" id="extrBtn">Extract</button><span class="hint" id="extrHint" style="margin:0"></span></div>
+  </div>
+  <div id="extrOut"></div>
+</section>
+
 <!-- ============ SPECIFICATION ============ -->
 <section id="spec">
   <div class="card">
@@ -147,7 +216,7 @@ tr.dim td{color:var(--muted)}
 <section id="run">
   <div class="card">
     <h2>Run the engine</h2>
-    <div class="msg warn">Extraction stages (retrieval, value / interpretation / record strategies) are not built yet, so every task currently returns <b>failed</b> by design. This tab already shows the document scope, task order and result format.</div>
+    <div class="msg warn">Value tasks now run retrieval and extraction (S06, S07). Nothing is validated or accepted yet (phases 6+), so a value the model found appears under <b>uncertain</b> as a proposal; interpretation and records tasks still return <b>failed</b> by design. Needs the extraction model configured in Settings.</div>
     <div class="row" style="margin:10px 0">
       <label>Spec <select id="runSpec"></select></label>
       <button class="btn" id="runBtn">Run</button>
@@ -176,16 +245,58 @@ tr.dim td{color:var(--muted)}
   </div>
 </section>
 
+<!-- ============ HISTORY ============ -->
+<section id="history">
+  <div class="card">
+    <h2>History of runs</h2>
+    <p class="hint">Everything you ran in this interface (parse, chunk and index, search, retrieve, extract, run, corpus measures), kept
+      across reloads. Pick a run to see what was asked, the settings and models used, and its result. Failed jobs are kept too.</p>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center">
+      <label>Type <select id="histKind"></select></label>
+      <label>Status <select id="histStatus"><option value="">all</option><option value="ok">ok</option><option value="error">failed</option></select></label>
+      <label>Search <input id="histText" placeholder="document, query, spec…"></label>
+      <button class="btn" id="histRefresh">Refresh</button>
+      <span style="flex:1"></span>
+      <button class="btn" id="histNewer" title="newer run (left arrow)">◀ Newer</button>
+      <span id="histPos" class="hint" style="margin:0"></span>
+      <button class="btn" id="histOlder" title="older run (right arrow)">Older ▶</button>
+      <button class="btn" id="histClear" title="delete the runs matching the filters above">Delete shown</button>
+    </div>
+    <div id="histList" style="margin-top:12px;max-height:340px;overflow:auto"></div>
+  </div>
+  <div class="card" id="histDetail" hidden></div>
+</section>
+
 <!-- ============ CORPUS ============ -->
 <section id="corpus">
   <div class="card">
     <h2>Evaluation corpus</h2>
     <p class="hint">Your human-labeled cases in <code>evaluation/corpus/</code>.</p>
     <div id="corpusStatus"></div>
+    <div id="corpusFilters" class="row" style="margin-top:10px;gap:14px;flex-wrap:wrap;align-items:center"></div>
+    <div id="corpusCases" style="margin-top:8px"></div>
     <div class="row" style="margin-top:10px"><button class="btn" id="corpusParse">Measure parsing quality</button>
-      <button class="btn" id="corpusIndex">Measure chunking quality</button></div>
+      <button class="btn" id="corpusIndex">Measure chunking quality</button>
+      <button class="btn" id="corpusExtract">Measure value extraction</button></div>
     <div id="corpusResult" style="margin-top:12px"></div>
+    <div id="corpusHistory" style="margin-top:18px"></div>
   </div>
+</section>
+
+<!-- ============ LOGS ============ -->
+<section id="logs">
+  <div class="card">
+    <div class="row">
+      <h2 style="margin:0" class="grow">Engine activity</h2>
+      <label class="hint" style="margin:0">Show <select id="logLevel"><option value="info">everything</option><option value="warn">warnings and errors</option></select></label>
+      <label class="hint" style="margin:0"><input type="checkbox" id="logFollow" checked> follow the newest</label>
+      <button class="btn ghost" id="logClear">Clear</button>
+    </div>
+    <p class="hint" style="margin-top:6px">Every job (parse, index, retrieve, extract, run, corpus measures) is one card with its stages
+      (S03 parsing, S04 indexing, S06 retrieval, S07 extraction...), timings and progress. Live while a job runs.</p>
+  </div>
+  <div id="logRuns"></div>
+  <p class="hint" id="logEmpty">Nothing has run yet. Start a job from any other tab and watch it here.</p>
 </section>
 
 </main>
@@ -209,7 +320,7 @@ $('#nav').onclick = e => {
   const tab = e.target.dataset.tab; if (!tab) return;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === e.target));
   document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === tab));
-  if (tab === 'run') loadRun(); if (tab === 'corpus') loadCorpus(); if (tab === 'settings') loadConfig(); if (tab === 'retr') loadRetrieval();
+  if (tab === 'logs') renderLogs(); if (tab === 'run') loadRun(); if (tab === 'corpus') loadCorpus(); if (tab === 'history') loadHistory(); if (tab === 'settings') loadConfig(); if (tab === 'retr') loadRetrieval(); if (tab === 'extr') loadExtraction();
 };
 
 /* ---------- documents ---------- */
@@ -293,14 +404,17 @@ function showIndex(r) {
   $('#searchOut').innerHTML = '';
   showIndexFrame(r.name);
 }
+function renderSearch(r) {
+    const col = (title, rows) => `<div class="grow"><h2>${title}</h2>${rows.length ? `<table><tbody>${rows.map((h, i) => `<tr><td>${i + 1}</td>
+      <td><b>${h.score}</b> <code>${esc(h.id.split(':').pop())}</code> · p${h.pages.join(',')}<br><small>${esc(h.heading_path.join(' › '))}</small><br>${esc(h.text.slice(0, 200))}</td></tr>`).join('')}</tbody></table>` : '<p class="hint">No hits.</p>'}</div>`;
+  return `<div class="row" style="align-items:flex-start;gap:20px">${col('Lexical (BM25)', r.lexical)}${col('Vector (embeddings)', r.vector)}</div>`;
+}
 $('#searchBtn').onclick = async e => {
   if (!indexDoc) return;
   busy(e.target, true, 'Searching…');
   try {
     const r = await api(`/documents/${encodeURIComponent(indexDoc)}/search`, json('POST', {query: $('#searchQ').value}));
-    const col = (title, rows) => `<div class="grow"><h2>${title}</h2>${rows.length ? `<table><tbody>${rows.map((h, i) => `<tr><td>${i + 1}</td>
-      <td><b>${h.score}</b> <code>${esc(h.id.split(':').pop())}</code> · p${h.pages.join(',')}<br><small>${esc(h.heading_path.join(' › '))}</small><br>${esc(h.text.slice(0, 200))}</td></tr>`).join('')}</tbody></table>` : '<p class="hint">No hits.</p>'}</div>`;
-    $('#searchOut').innerHTML = `<div class="row" style="align-items:flex-start;gap:20px">${col('Lexical (BM25)', r.lexical)}${col('Vector (embeddings)', r.vector)}</div>`;
+    $('#searchOut').innerHTML = renderSearch(r);
   } catch (err) { $('#searchOut').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
   busy(e.target, false);
 };
@@ -365,19 +479,22 @@ async function loadRun() {
   $('#runDocs').innerHTML = docs.length ? docs.map(d => `<label><input type="checkbox" value="${esc(d.name)}" checked> ${esc(d.name)}</label>`).join('')
     : '<span class="hint">Upload documents in the Documents tab first.</span>';
 }
+function renderRun(r) {
+    const kind = s => ({supported: 'ok', not_found: 'warn', uncertain: 'warn', failed: 'bad'}[s]);
+    return `<h2>Results</h2>
+      <p class="hint">${r.manifest.documents.length} document(s) in scope · precedence ${r.manifest.scope.precedence_resolved ? 'resolved' : 'unresolved (several documents without relationships or rules)'}</p>
+      <table><thead><tr><th>Task</th><th>Kind</th><th>Status</th><th>Value / records</th><th>Notes</th></tr></thead><tbody>${r.results.map(x => `<tr>
+        <td><code>${esc(x.task_id)}</code></td><td>${esc(x.kind)}</td><td>${pill(x.status, kind(x.status))}</td>
+        <td>${x.kind === 'records' ? esc(x.records.length + ' record(s) · ' + x.completeness) : x.value != null ? esc(JSON.stringify(x.value)) : x.alternatives.length ? '<i>proposed:</i> ' + esc(x.alternatives.map(a => JSON.stringify(a)).join(' | ')) : '—'}</td>
+        <td>${esc(x.diagnostics.join(' · '))}</td></tr>`).join('')}</tbody></table>
+      <details style="margin-top:12px"><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+}
 $('#runBtn').onclick = async e => {
   const docs = [...document.querySelectorAll('#runDocs input:checked')].map(i => i.value);
   const out = $('#runOut'); out.hidden = false; busy(e.target, true, 'Running…');
   try {
     const r = await api('/run', json('POST', {spec: $('#runSpec').value, documents: docs}));
-    const kind = s => ({supported: 'ok', not_found: 'warn', uncertain: 'warn', failed: 'bad'}[s]);
-    out.innerHTML = `<h2>Results</h2>
-      <p class="hint">${r.manifest.documents.length} document(s) in scope · precedence ${r.manifest.scope.precedence_resolved ? 'resolved' : 'unresolved (several documents without relationships or rules)'}</p>
-      <table><thead><tr><th>Task</th><th>Kind</th><th>Status</th><th>Value / records</th><th>Notes</th></tr></thead><tbody>${r.results.map(x => `<tr>
-        <td><code>${esc(x.task_id)}</code></td><td>${esc(x.kind)}</td><td>${pill(x.status, kind(x.status))}</td>
-        <td>${x.kind === 'records' ? esc(x.records.length + ' record(s) · ' + x.completeness) : esc(x.value ?? '—')}</td>
-        <td>${esc(x.diagnostics.join(' · '))}</td></tr>`).join('')}</tbody></table>
-      <details style="margin-top:12px"><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+    out.innerHTML = renderRun(r);
   } catch (err) { out.innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
   busy(e.target, false);
 };
@@ -407,6 +524,19 @@ const CHUNK_HELP = {
   table_first_row_is_header: 'Treat the first table row as a header when the parser flags none',
   resolve_references: 'Resolve "Section 5.2" / "Schedule A" to their headings',
 };
+const EXTRACT_HELP = {
+  max_candidates: 'Values the model may report per call', retries: 'Extra attempts when a model call fails',
+  prompt_margin: 'Share of the model context kept free (token counts are estimates)',
+  choose_with_model: 'Let the model apply the task precedence rules to conflicting values',
+  unresolved_references_block_absence: '"see Section 9" (a section of the document itself) that cannot be found keeps an empty answer uncertain, not not_found',
+  unresolved_attachments_block_absence: 'The same for Schedule / Exhibit / Appendix / Annex references (off: attachments missing from the supplied files do not block "not found")',
+  allow_unlocated_quotes: 'Keep (flagged) candidates whose quote is not in the evidence when nothing better exists',
+  screen_candidates: 'Code gates: redacted, value not in its quote, blank field, unreadable typed value',
+  verify_candidates: 'One extra model call removes candidates that do not answer THE FIELD',
+  passages_per_call: 'Passages per model call (empty = as many as fit; 1 = one call per passage)',
+  think_extraction: 'Let the model reason before listing candidates (slower, more accurate)',
+  think_verification: 'Let the model reason when verifying candidates', think_choice: 'Let the model reason when applying precedence rules',
+};
 const jsonText = o => JSON.stringify(o ?? {});
 async function loadConfig() {
   cfg = await api('/config'); const opts = await api('/options');
@@ -414,11 +544,19 @@ async function loadConfig() {
   const ck = (k, v) => typeof v === 'boolean'
     ? `<label>${k}<select data-ck="${k}"><option ${v ? 'selected' : ''} value="true">yes</option><option ${v ? '' : 'selected'} value="false">no</option></select><small>${CHUNK_HELP[k] || ''}</small></label>`
     : `<label>${k}<input data-ck="${k}" type="number" step="any" value="${v}"><small>${CHUNK_HELP[k] || ''}</small></label>`;
+  const ex = (k, v) => k.startsWith('think_')   // yes / no / the adapter's default
+    ? `<label>${k}<select data-ex="${k}"><option value="" ${v == null ? 'selected' : ''}>adapter default</option><option value="true" ${v === true ? 'selected' : ''}>yes</option><option value="false" ${v === false ? 'selected' : ''}>no</option></select><small>${EXTRACT_HELP[k] || ''}</small></label>`
+    : typeof v === 'boolean'
+    ? `<label>${k}<select data-ex="${k}"><option ${v ? 'selected' : ''} value="true">yes</option><option ${v ? '' : 'selected'} value="false">no</option></select><small>${EXTRACT_HELP[k] || ''}</small></label>`
+    : `<label>${k}<input data-ex="${k}" type="number" step="any" value="${v ?? ''}" ${v == null ? 'placeholder="no limit"' : ''}><small>${EXTRACT_HELP[k] || ''}</small></label>`;
   $('#idxForm').innerHTML =
     sel('cfgEmbName', 'embedding adapter', opts.embedding, cfg.models.embedding.name) +
     `<label>embedding params (JSON)<input id="cfgEmbParams" value="${esc(jsonText(cfg.models.embedding.params))}"><small>e.g. {"model": "Qwen/Qwen3-Embedding-0.6B", "device": "auto"}</small></label>` +
     sel('cfgRerName', 'reranker adapter', opts.reranking, cfg.models.reranking.name) +
     `<label>reranker params (JSON)<input id="cfgRerParams" value="${esc(jsonText(cfg.models.reranking.params))}"><small>e.g. {"model": "tomaarsen/Qwen3-Reranker-0.6B-seq-cls"}</small></label>` +
+    sel('cfgExtName', 'extraction model adapter', opts.extraction, cfg.models.extraction.name) +
+    `<label>extraction model params (JSON)<input id="cfgExtParams" value="${esc(jsonText(cfg.models.extraction.params))}"><small>e.g. {"model": "qwen3:8b", "context_tokens": 16384} (ollama_chat) or {"base_url": "...", "model": "...", "api_key_env": "..."} (openai_compatible_chat)</small></label>` +
+    Object.entries(cfg.extraction).map(([k, v]) => ex(k, v)).join('') +
     sel('cfgProfile', 'default retrieval profile', Object.keys(opts.retrieval.profiles), cfg.retrieval.profile) +
     sel('cfgLexName', 'lexical store', opts.stores.lexical, cfg.indexing.lexical_store.name) +
     `<label>lexical store params (JSON)<input id="cfgLexParams" value="${esc(jsonText(cfg.indexing.lexical_store.params))}"></label>` +
@@ -447,10 +585,15 @@ $('#cfgSave').onclick = async () => {
     const k = el.dataset.ck, v = el.value;
     next.indexing.chunking[k] = v === 'true' ? true : v === 'false' ? false : Number(v);
   });
+  document.querySelectorAll('#idxForm [data-ex]').forEach(el => {
+    const k = el.dataset.ex, v = el.value;
+    next.extraction[k] = v === 'true' ? true : v === 'false' ? false : v === '' ? null : Number(v);
+  });
   try {
     const parse = id => JSON.parse($(id).value || '{}');
     next.models.embedding = {name: $('#cfgEmbName').value, params: parse('#cfgEmbParams')};
     next.models.reranking = {name: $('#cfgRerName').value, params: parse('#cfgRerParams')};
+    next.models.extraction = {name: $('#cfgExtName').value, params: parse('#cfgExtParams')};
     next.retrieval.profile = $('#cfgProfile').value;
     next.indexing.lexical_store = {name: $('#cfgLexName').value, params: parse('#cfgLexParams')};
     next.indexing.vector_store = {name: $('#cfgVecName').value, params: parse('#cfgVecParams')};
@@ -460,19 +603,123 @@ $('#cfgSave').onclick = async () => {
 };
 $('#cfgReset').onclick = async () => { await api('/config', {method: 'DELETE'}); $('#cfgMsg').innerHTML = '<div class="msg ok">Defaults restored.</div>'; loadConfig(); };
 
+/* ---------- history of runs ---------- */
+const HIST_TAB = {parse: 'docs', index: 'docs', search: 'docs', retrieve: 'retr', extract: 'extr', run: 'run'};
+let histRuns = [], histSel = null;
+function gotoTab(tab) { document.querySelector(`nav button[data-tab="${tab}"]`).click(); }
+async function openHistory(group, kind) {  // jump to the History tab with a filter
+  gotoTab('history');
+  await loadHistory(group || kind || '');
+}
+async function loadHistory(presetKind) {
+  const sel = $('#histKind');
+  if (!sel.options.length) {
+    const kinds = {'': 'All runs', parse: 'Parse', index: 'Chunk & index', search: 'Index search', retrieve: 'Retrieve evidence',
+      extract: 'Extract value', run: 'Run spec', 'corpus.': 'All corpus measures', 'corpus.parsing': 'Corpus · parsing',
+      'corpus.indexing': 'Corpus · chunking', 'corpus.extraction': 'Corpus · extraction'};
+    sel.innerHTML = Object.entries(kinds).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join('');
+  }
+  if (typeof presetKind === 'string') sel.value = presetKind;
+  const v = sel.value, q = v.endsWith('.') ? 'group=' + encodeURIComponent(v) : v ? 'kind=' + encodeURIComponent(v) : '';
+  let runs = await api('/history' + (q ? '?' + q : ''));
+  const st = $('#histStatus').value, text = $('#histText').value.trim().toLowerCase();
+  if (st) runs = runs.filter(r => r.status === st);
+  if (text) runs = runs.filter(r => (r.subject + ' ' + r.headline + ' ' + r.label).toLowerCase().includes(text));
+  histRuns = runs;
+  if (!histRuns.some(r => r.run_id === histSel)) histSel = histRuns.length ? histRuns[0].run_id : null;
+  renderHistList();
+  if (histSel) await showHistoryRun(histSel); else $('#histDetail').hidden = true;
+}
+function renderHistList() {
+  const i = histRuns.findIndex(r => r.run_id === histSel);
+  $('#histPos').textContent = histRuns.length ? `${i + 1} / ${histRuns.length}` : '';
+  $('#histNewer').disabled = i <= 0; $('#histOlder').disabled = i < 0 || i >= histRuns.length - 1;
+  $('#histList').innerHTML = histRuns.length ? `<table><thead><tr><th>When</th><th>Type</th><th>What</th><th>Result</th><th>Sec</th><th></th></tr></thead><tbody>${histRuns.map(r =>
+    `<tr data-id="${esc(r.run_id)}" style="cursor:pointer;${r.run_id === histSel ? 'background:rgba(120,120,255,.15)' : ''}">
+      <td>${esc(r.finished_at.replace('T', ' '))}</td><td>${esc(r.label)}</td><td><small>${esc(r.subject)}</small></td>
+      <td>${r.status === 'error' ? pill('failed', 'bad') + ' ' : ''}<small>${esc(r.headline)}</small></td><td>${r.seconds ?? ''}</td>
+      <td><button class="btn" data-del="${esc(r.run_id)}" title="delete this run">✕</button></td></tr>`).join('')}</tbody></table>`
+    : '<p class="hint">No runs yet for this filter. Run something from another tab and it will show up here.</p>';
+}
+async function showHistoryRun(id) {
+  histSel = id; renderHistList();
+  const sel = document.querySelector(`#histList tr[data-id="${CSS.escape(id)}"]`); if (sel) sel.scrollIntoView({block: 'nearest'});
+  const box = $('#histDetail'); box.hidden = false;
+  let rec;
+  try { rec = await api('/history/' + encodeURIComponent(id)); } catch (err) { box.innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; return; }
+  const set = Object.entries(rec.settings || {}).map(([k, v]) => `<span class="chip">${esc(k)}: ${esc(v)}</span>`).join(' ');
+  let body;
+  if (rec.status === 'error') body = `<div class="msg bad"><b>The job failed:</b> ${esc(rec.error)}</div>`;
+  else if (rec.kind === 'run') body = renderRun(rec.result);
+  else if (rec.kind === 'search') body = renderSearch(rec.result);
+  else if (rec.kind.startsWith('corpus.')) body = CORPUS_RENDER[rec.kind.split('.')[1]](rec.result);
+  else body = `<p><button class="btn" id="histOpen">Open this result in the ${esc({docs: 'Documents', retr: 'Retrieval', extr: 'Extraction'}[HIST_TAB[rec.kind]])} tab</button></p>
+    <p class="hint">${esc(rec.headline)}${rec.kind === 'parse' || rec.kind === 'index' ? ' · the page view on the right of that tab always shows the latest report of the document.' : ''}</p>`;
+  box.innerHTML = `<h2>${esc(rec.label)} · ${esc(rec.finished_at.replace('T', ' '))} ${rec.status === 'error' ? pill('failed', 'bad') : pill('ok', 'ok')}</h2>
+    <p>${esc(rec.subject)} <span class="hint">· ${rec.seconds ?? '?'} s</span></p><p>${set}</p>
+    <details><summary>What was asked (parameters)</summary><pre>${esc(JSON.stringify(rec.params, null, 2))}</pre></details>
+    <div style="margin-top:12px">${body}</div>
+    ${rec.result ? `<details style="margin-top:12px"><summary>Raw result JSON</summary><pre>${esc(JSON.stringify(rec.result, null, 2))}</pre></details>` : ''}`;
+  const open = $('#histOpen');
+  if (open) open.onclick = () => {
+    gotoTab(HIST_TAB[rec.kind]);
+    ({parse: showParse, index: showIndex, retrieve: showEvidence, extract: showProposal})[rec.kind](rec.result);
+  };
+}
+function stepHistory(delta) {
+  const i = histRuns.findIndex(r => r.run_id === histSel), j = i + delta;
+  if (i >= 0 && j >= 0 && j < histRuns.length) showHistoryRun(histRuns[j].run_id);
+}
+$('#histNewer').onclick = () => stepHistory(-1);
+$('#histOlder').onclick = () => stepHistory(1);
+$('#histRefresh').onclick = () => loadHistory();
+$('#histKind').onchange = $('#histStatus').onchange = () => loadHistory();
+$('#histText').onkeydown = e => { if (e.key === 'Enter') loadHistory(); };
+$('#histList').onclick = async e => {
+  const del = e.target.closest('[data-del]');
+  if (del) { await api('/history/' + encodeURIComponent(del.dataset.del), {method: 'DELETE'}); return loadHistory(); }
+  const row = e.target.closest('tr[data-id]'); if (row) showHistoryRun(row.dataset.id);
+};
+$('#histClear').onclick = async () => {
+  if (!histRuns.length) return;
+  if (!confirm(`Delete the ${histRuns.length} run(s) shown?`)) return;
+  for (const r of histRuns) await api('/history/' + encodeURIComponent(r.run_id), {method: 'DELETE'});
+  histSel = null; loadHistory();
+};
+document.addEventListener('keydown', e => {
+  if (!$('#history').classList.contains('active') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if (e.key === 'ArrowLeft') stepHistory(-1); if (e.key === 'ArrowRight') stepHistory(1);
+});
+
 /* ---------- corpus ---------- */
 async function loadCorpus() {
   const s = await api('/corpus');
   $('#corpusStatus').innerHTML = s.ok
     ? `<div class="msg ok">Corpus valid · ${s.cases.length} case(s)${s.cases.length ? ': ' + esc(s.cases.join(', ')) : ' — add labeled cases (see evaluation/corpus/README.md)'}</div>`
     : `<div class="msg bad"><b>Problems found:</b><br>${s.problems.map(esc).join('<br>')}</div>`;
+  loadCorpusHistory(true).catch(() => {});
+  if (!s.ok) { $('#corpusFilters').innerHTML = ''; $('#corpusCases').innerHTML = ''; return; }
+  const splits = s.tags.filter(t => t.startsWith('split:'));
+  $('#corpusFilters').innerHTML = `<span>Score field types:</span>` + s.kinds.map(k =>
+    `<label title="${k.implemented ? '' : 'extractor not implemented yet'}"><input type="checkbox" name="kind" value="${esc(k.kind)}"
+      ${k.implemented ? 'checked' : 'disabled'}> ${esc(k.kind)} (${k.labeled} labeled)${k.implemented ? '' : ' — not implemented yet'}</label>`).join('')
+    + (splits.length ? `<label>Cases: <select id="corpusSplit"><option value="">all</option>${splits.map(t => `<option value="${esc(t)}">${esc(t.slice(6))}</option>`).join('')}</select></label>` : '');
+
+  $('#corpusCases').innerHTML = `<details><summary>Extraction projects to test (spec + documents + labels): <span id="corpusCasesCount"></span></summary>
+    <div class="row" style="gap:6px 16px;flex-wrap:wrap;margin-top:6px">
+    <button class="btn" type="button" id="corpusCasesAll">All</button><button class="btn" type="button" id="corpusCasesNone">None</button>
+    ${s.case_info.map(c => `<label title="${esc(c.tags.join(', '))}"><input type="checkbox" name="case" value="${esc(c.id)}" checked>
+      ${esc(c.id)} <small>${esc(c.spec)} · ${esc(c.documents.join(', '))}</small></label>`).join('')}</div></details>`;
+  const boxes = () => [...document.querySelectorAll('#corpusCases input[name=case]')];
+  const count = () => $('#corpusCasesCount').textContent = `${boxes().filter(b => b.checked).length} of ${boxes().length} selected (extraction measure only)`;
+  boxes().forEach(b => b.onchange = count); count();
+  $('#corpusCasesAll').onclick = () => { boxes().forEach(b => b.checked = true); count(); };
+  $('#corpusCasesNone').onclick = () => { boxes().forEach(b => b.checked = false); count(); };
 }
-$('#corpusParse').onclick = async e => {
-  busy(e.target, true, 'Measuring…');
-  try {
-    const r = await api('/corpus/parsing', {method: 'POST'}), m = r.metrics;
-    const pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
-    $('#corpusResult').innerHTML = `<table><tbody>
+const CORPUS_RENDER = {
+  parsing(r) {
+    const m = r.metrics, pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
+    return `<table><tbody>
       <tr><th>Quote recall</th><td>${pct(r.quote_recall)} (${m.quotes_found}/${m.quotes_total})</td></tr>
       <tr><th>Right page</th><td>${pct(r.page_accuracy)} (${m.quotes_on_page}/${m.quotes_with_page})</td></tr>
       <tr><th>Pages / via OCR</th><td>${m.pages} / ${m.pages_ocr}</td></tr>
@@ -480,24 +727,79 @@ $('#corpusParse').onclick = async e => {
       <tr><th>Unresolved issues</th><td>${m.unresolved_issues}</td></tr></tbody></table>
       ${r.misses.length ? `<h2 style="margin-top:14px">Misses</h2><table><tbody>${r.misses.map(c =>
         `<tr><td>${esc(c.document)}</td><td>p${c.page ?? '?'}</td><td>${esc(c.quote)}</td><td>${c.found ? pill('wrong page', 'warn') : pill('not found', 'bad')}</td></tr>`).join('')}</tbody></table>` : ''}`;
-  } catch (err) { $('#corpusResult').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
-  busy(e.target, false);
-};
-
-$('#corpusIndex').onclick = async e => {
-  busy(e.target, true, 'Measuring…');
-  try {
-    const r = await api('/corpus/indexing', {method: 'POST'}), m = r.metrics;
-    const pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
-    $('#corpusResult').innerHTML = `<table><tbody>
+  },
+  indexing(r) {
+    const m = r.metrics, pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
+    return `<table><tbody>
       <tr><th>Quotes inside ONE passage</th><td>${pct(r.containment)} (${m.in_single_passage}/${m.quotes_total})</td></tr>
       <tr><th>Quotes cut across passages</th><td>${m.split_across_passages}</td></tr>
       <tr><th>Quotes not found (parsing problem)</th><td>${m.not_found}</td></tr>
       <tr><th>Documents / passages</th><td>${m.documents} / ${m.passages}</td></tr>
       <tr><th>Tokens per passage (mean / max)</th><td>${Math.round(m.mean_tokens)} / ${m.max_tokens}</td></tr>
       <tr><th>Structural violations</th><td>${m.invariant_violations.length ? m.invariant_violations.map(esc).join('<br>') : pill('none', 'ok')}</td></tr></tbody></table>`;
+  },
+  extraction(r) {
+    const pct = (row, k) => row.tasks ? Math.round(100 * (row.counts[k] || 0) / row.tasks) + '%' : 'n/a';
+    return `<table><thead><tr><th>Profile</th><th>Tasks</th><th>Correct</th><th>Wrong</th><th>…wrong but cited</th><th>Abstained</th>
+      <th>False absence</th><th>False value</th><th>Failed</th><th>Sec/task</th></tr></thead><tbody>${r.rows.map(x => `<tr><td>${esc(x.profile)}</td><td>${x.tasks}</td>
+      <td>${pct(x, 'correct')}</td><td>${pct(x, 'wrong')}</td><td>${pct(x, 'wrong_but_cited')}</td><td>${pct(x, 'abstained')}</td><td>${pct(x, 'false_absence')}</td>
+      <td>${pct(x, 'false_value')}</td><td>${pct(x, 'failed')}</td><td>${x.mean_seconds.toFixed(1)}</td></tr>`).join('')}</tbody></table>
+      <p class="hint">False absence (the engine says it is not there, but it is) and false value (it invents one) are the errors that matter most.</p>
+      ${r.misses.length ? `<h2 style="margin-top:14px">Misses (${r.misses.length})</h2><table><thead><tr><th>Business id</th><th>Field id</th>
+        <th>Description</th><th>Expected value</th><th>Extracted value</th><th>Error type</th></tr></thead><tbody>${r.misses.map(o => {
+          const val = v => typeof v === 'string' ? v : JSON.stringify(v);
+          const desc = o.description || '';
+          return `<tr><td>${esc(o.case_id)}${r.rows.length > 1 ? `<br><small>${esc(o.profile)}</small>` : ''}</td><td><code>${esc(o.task_id)}</code></td>
+          <td><small title="${esc(desc)}" style="display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(desc)}</small></td>
+          <td>${esc(val(o.expected))}</td><td>${esc(val(o.got))}${o.reason ? `<br><small class="hint" title="${esc(o.reason)}">${esc(o.reason)}</small>` : ''}</td>
+          <td>${pill(o.outcome.replace(/_/g, ' '), o.outcome === 'abstained' ? 'warn' : 'bad')}</td></tr>`; }).join('')}</tbody></table>` : ''}`;
+  },
+};
+function showCorpusResult(measure, r, meta) {
+  const when = meta
+    ? `<p class="hint">${esc(meta.label)} · ${esc(meta.finished_at.replace('T', ' '))} · ${esc(meta.subject)}${meta.settings && meta.settings.retrieval_profile ? ` · profile ${esc(meta.settings.retrieval_profile)}, model ${esc(meta.settings.extraction || '')}` : ''}</p>` : '';
+  $('#corpusResult').innerHTML = when + CORPUS_RENDER[measure](r);
+}
+async function openCorpusRun(runId) {
+  try {
+    const rec = await api('/history/' + encodeURIComponent(runId));
+    if (rec.status === 'error') $('#corpusResult').innerHTML = `<div class="msg bad">${esc(rec.error)}</div>`;
+    else showCorpusResult(rec.kind.split('.')[1], rec.result, rec);
+  } catch (err) { $('#corpusResult').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
+}
+async function loadCorpusHistory(showLatest) {
+  const h = await api('/history?group=corpus.');
+  $('#corpusHistory').innerHTML = h.length ? `<h2>History <a class="hint" href="#" id="corpusAllHistory">(all runs → History tab)</a></h2><table><thead><tr><th>When</th><th>Measure</th><th>Scope</th><th>Result</th><th></th></tr></thead><tbody>${h.map(x => `<tr>
+    <td>${esc(x.finished_at.replace('T', ' '))}</td><td>${esc(x.label)}</td>
+    <td><small>${esc(x.subject)} · ${esc(x.settings.retrieval_profile || '')} / ${esc(x.settings.extraction || '')}</small></td>
+    <td>${x.status === 'error' ? pill('failed', 'bad') + ' ' : ''}${esc(x.headline)}</td>
+    <td><button class="btn" data-run="${esc(x.run_id)}">View</button></td></tr>`).join('')}</tbody></table>` : '';
+  document.querySelectorAll('#corpusHistory [data-run]').forEach(b => b.onclick = () => openCorpusRun(b.dataset.run));
+  const all = $('#corpusAllHistory'); if (all) all.onclick = ev => { ev.preventDefault(); openHistory('corpus.', null); };
+  if (showLatest && h.length && !$('#corpusResult').innerHTML) {
+    const ok = h.find(x => x.status === 'ok'); if (ok) openCorpusRun(ok.run_id);
+  }
+}
+async function runCorpusMeasure(e, measure, label, body) {
+  busy(e.target, true, label);
+  try {
+    const r = await api('/corpus/' + measure, body ? json('POST', body) : {method: 'POST'});
+    const rec = await api('/history/' + encodeURIComponent(r.run_id));
+    showCorpusResult(measure, r, rec);
+    loadCorpusHistory(false);
   } catch (err) { $('#corpusResult').innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
   busy(e.target, false);
+}
+$('#corpusParse').onclick = e => runCorpusMeasure(e, 'parsing', 'Measuring…');
+$('#corpusIndex').onclick = e => runCorpusMeasure(e, 'indexing', 'Measuring…');
+$('#corpusExtract').onclick = e => {
+  const kinds = [...document.querySelectorAll('#corpusFilters input[name=kind]:checked')].map(x => x.value);
+  const cases = [...document.querySelectorAll('#corpusCases input[name=case]:checked')].map(x => x.value);
+  if (document.querySelector('#corpusCases input[name=case]') && !cases.length) {
+    $('#corpusResult').innerHTML = '<div class="msg bad">select at least one extraction project to test</div>'; return;
+  }
+  const tags = $('#corpusSplit') && $('#corpusSplit').value ? [$('#corpusSplit').value] : [];
+  runCorpusMeasure(e, 'extraction', 'Measuring (runs the model on every value task)…', {kinds, tags, cases});
 };
 
 /* ---------- retrieval (S06) ---------- */
@@ -627,6 +929,189 @@ function showEvidence(r) {
       <details style="margin-top:10px"><summary><b>Settings used</b> (profile + your changes)</summary><pre>${esc(JSON.stringify(r.settings, null, 2))}</pre></details></div>`;
   $('#retrOut').scrollIntoView({behavior: 'smooth'});
 }
+
+/* ---------- value extraction (S07) ---------- */
+let extrTasks = [];
+async function loadExtraction() {
+  const opts = (await api('/options')).retrieval;
+  const docs = (await api('/documents')).filter(d => d.parseable);
+  const prev = new Set([...document.querySelectorAll('#extrDocs input:checked')].map(i => i.value));
+  $('#extrDocs').innerHTML = docs.length
+    ? docs.map(d => `<label><input type="checkbox" value="${esc(d.name)}" ${prev.size && !prev.has(d.name) ? '' : 'checked'}> ${esc(d.name)}</label>`).join('')
+    : '<span class="hint">Upload documents in the Documents tab first.</span>';
+  const cur = $('#extrProfile').value || opts.active;
+  $('#extrProfile').innerHTML = Object.keys(opts.profiles).map(n => `<option ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  const specs = await api('/specs'); $('#extrSpec').innerHTML = specs.map(n => `<option>${esc(n)}</option>`).join('');
+  if (specs.length) loadExtrTasks();
+}
+async function loadExtrTasks() {
+  try { extrTasks = (await api(`/specs/${encodeURIComponent($('#extrSpec').value)}/retrieval-tasks`)).filter(t => t.kind === 'value'); } catch (e) { extrTasks = []; }
+  $('#extrTask').innerHTML = extrTasks.map((t, i) => `<option value="${i}">${esc(t.label)}</option>`).join('');
+}
+$('#extrSpec').onchange = loadExtrTasks;
+$('#extrUse').onclick = () => {
+  const t = extrTasks[$('#extrTask').value]; if (!t) return;
+  $('#extrText').value = t.text; $('#extrEntity').value = t.entity || ''; $('#extrTime').value = t.time || '';
+  $('#extrType').value = t.output.type === 'label' ? 'string' : t.output.type; $('#extrCard').value = t.output.cardinality;
+  $('#extrAbsent').value = t.rules.on_absent;
+  $('#extrLabels').value = t.labels.map(l => `${l.name}: ${l.meaning}`).join('\n');
+  $('#extrPrecedence').value = t.rules.precedence.join('\n'); $('#extrNormalization').value = t.rules.normalization || '';
+  $('#extrAmbiguity').value = t.rules.ambiguity || ''; $('#extrDerivation').value = t.rules.derivation || '';
+};
+function extrLabels() {
+  return $('#extrLabels').value.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const i = l.indexOf(':'); return i < 0 ? {name: l, meaning: l} : {name: l.slice(0, i).trim(), meaning: l.slice(i + 1).trim()};
+  });
+}
+$('#extrBtn').onclick = async e => {
+  const documents = [...document.querySelectorAll('#extrDocs input:checked')].map(i => i.value);
+  busy(e.target, true, 'Extracting…'); $('#extrHint').textContent = 'the first run indexes the documents and loads the models; the model call itself can take a while';
+  try {
+    const task = {text: $('#extrText').value, type: $('#extrType').value, cardinality: $('#extrCard').value, on_absent: $('#extrAbsent').value,
+      entity: $('#extrEntity').value, time: $('#extrTime').value, labels: extrLabels(), precedence: $('#extrPrecedence').value,
+      normalization: $('#extrNormalization').value, ambiguity: $('#extrAmbiguity').value, derivation: $('#extrDerivation').value};
+    if (task.labels.length) task.type = 'label';
+    showProposal(await api('/extract', json('POST', {documents, task, profile: $('#extrProfile').value})));
+  } catch (err) { $('#extrOut').innerHTML = `<div class="card"><div class="msg bad">${esc(err.message)}</div></div>`; }
+  $('#extrHint').textContent = ''; busy(e.target, false);
+};
+$('#extrText').onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('#extrBtn').click(); };
+const OUTCOME_KIND = {found: 'ok', absent: 'warn', uncertain: 'warn', failed: 'bad'};
+function showProposal(r) {
+  const flagKind = f => f.startsWith('rejected:') || ['quote_not_located', 'no_quote', 'not_normalized', 'value_not_in_quote'].includes(f) ? 'bad' : 'warn';
+  $('#extrOut').innerHTML = `
+    <div class="card"><h2>Result</h2>
+      <p>${pill(r.outcome, OUTCOME_KIND[r.outcome])} <b style="font-size:16px">${r.value == null ? '—' : esc(JSON.stringify(r.value))}</b></p>
+      <p>${esc(r.reason)}</p>
+      <p class="hint">Engine result for this task today: <b>${esc(r.would_be)}</b> · model ${esc(r.model)} · ${r.seconds}s in total
+        (retrieval ${r.evidence.seconds}s) · ${r.calls.length} model call(s)</p>
+      ${r.gaps.map(g => `<div class="msg warn">Gap: ${esc(g)}</div>`).join('')}</div>
+    <div class="card"><h2>Candidates the model reported (${r.candidates.length})</h2>
+      <p class="hint">Each quote is searched in the evidence by code; <b>chosen</b> marks the candidate behind the value. Values that agree after normalization are merged.</p>
+      ${r.candidates.length ? `<table><thead><tr><th></th><th>Id</th><th>As written</th><th>Normalized</th><th>About / date / conditions</th><th>Flags</th><th>Quote</th></tr></thead><tbody>
+      ${r.candidates.map(c => `<tr class="${c.chosen ? '' : 'dim'}"><td>${c.chosen ? pill('chosen', 'ok') : ''}</td><td><code>${esc(c.candidate_id)}</code></td>
+        <td>${c.source_value == null ? '<i>derived: ' + esc(c.derivation) + '</i>' : esc(c.source_value)}</td>
+        <td><code>${esc(JSON.stringify(c.normalized_value))}</code></td>
+        <td><small>${esc([c.entity, c.date].filter(Boolean).join(' · '))}${c.qualifications.length ? '<br>' + esc(c.qualifications.join('; ')) : ''}</small></td>
+        <td>${c.flags.map(f => pill(f, flagKind(f))).join(' ')}</td>
+        <td><small>${c.quote ? '“' + esc(c.quote) + '”' : ''}${c.short ? `<br><code>${esc(c.short)}</code> · ${esc(c.document)} · p${c.pages.join(',')}` : ''}</small></td></tr>`).join('')}</tbody></table>`
+        : '<p class="hint">The model reported no candidates.</p>'}</div>
+    <div class="card"><h2>What the engine did</h2><ol style="margin:0;padding-left:20px">${r.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></div>
+    <div class="card"><h2>Evidence handed to the model (${r.evidence.package.length} passage(s))</h2>
+      <details><summary>Show the passages, as retrieval ranked and packaged them</summary>
+      ${r.evidence.package.map(x => `<div class="ev ${x.origin === 'qualifier' ? 'qualifier' : x.origin === 'retrieved' ? '' : 'context'}">
+        <div class="meta">${pill(x.origin, x.origin === 'retrieved' ? 'ok' : x.origin === 'qualifier' ? 'warn' : '')} <code>${esc(x.short)}</code> · ${where(x)} · relevance ${scoreBar(x.score)}</div>
+        <pre>${esc(x.text)}</pre></div>`).join('')}</details></div>
+    <div class="card"><h2>Model calls (${r.calls.length})</h2>
+      <p class="hint">Exactly what was sent and what came back, so a wrong answer can be traced to the prompt, the evidence or the model.</p>
+      ${r.calls.map(c => `<details style="margin-bottom:8px"><summary><b>${esc(c.purpose)}</b> · ${c.seconds}s · ${c.prompt_tokens ?? '?'} prompt / ${c.completion_tokens ?? '?'} answer tokens
+          ${c.error ? pill('error', 'bad') : ''}</summary>
+        ${c.error ? `<div class="msg bad">${esc(c.error)}</div>` : ''}
+        <p><b>System</b></p><pre>${esc(c.system)}</pre><p><b>User</b></p><pre>${esc(c.user)}</pre>
+        <p><b>Raw answer</b></p><pre>${esc(c.raw)}</pre>
+        <details><summary>JSON schema the answer had to follow</summary><pre>${esc(JSON.stringify(c.schema, null, 2))}</pre></details></details>`).join('')}</div>`;
+  $('#extrOut').scrollIntoView({behavior: 'smooth'});
+}
+
+/* ---------- logs (engine events, polled) ---------- */
+const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S06: 'retrieve', S07: 'extract', S13: 'result', eval: 'evaluate', ui: 'queue'};
+const RUNS = new Map();   // run id -> {id,title,start,end,failed,events:[],progress:{},open:{},stages:{}}
+let logSeq = 0, lastRunId = null;
+const openRuns = new Set();
+
+function ingest(ev) {
+  const id = ev.run || '-';
+  let r = RUNS.get(id);
+  if (!r) { r = {id, title: id === '-' ? 'Other activity' : 'Job', start: ev.time, end: null, failed: false, events: [], progress: {}, open: {}, stages: {}, last: null}; RUNS.set(id, r); lastRunId = id; }
+  r.events.push(ev);
+  if (ev.kind === 'run_start') { r.title = ev.data.title || r.title; r.start = ev.time; return; }
+  if (ev.kind === 'run_end') { r.end = ev.time; r.failed = !!ev.data.failed; return; }
+  if (ev.stage === 'run') return;
+  r.last = ev.stage;
+  const st = r.stages[ev.stage] ??= {n: 0, error: false, seconds: 0};
+  st.n++; if (ev.level === 'error') st.error = true;
+  if (ev.kind === 'start') r.open[ev.stage] = (r.open[ev.stage] || 0) + 1;
+  if (ev.kind === 'end') { r.open[ev.stage] = Math.max(0, (r.open[ev.stage] || 1) - 1); st.seconds += ev.data.seconds || 0; }
+  if (ev.kind === 'progress') r.progress[ev.stage] = ev.data;
+}
+const stageState = (r, code) => {
+  const st = r.stages[code]; if (!st) return '';
+  if (st.error) return 'error';
+  if (!r.end && (r.open[code] > 0 || r.last === code)) return 'running';
+  return 'done';
+};
+const stTitle = (r, c) => `${r.stages[c].n} event(s)` + (r.stages[c].seconds ? `, ${r.stages[c].seconds.toFixed(1)}s in timed steps` : '');
+const stageChips = r => Object.keys(r.stages).map(c =>
+  `<span class="stg ${stageState(r, c)}" title="${stTitle(r, c)}">${esc(c)}${STAGES[c] ? ' ' + STAGES[c] : ''}</span>`).join('');
+const fmtSecs = s => s < 60 ? s.toFixed(1) + 's' : Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's';
+const bestProgress = r => { const ps = Object.entries(r.progress); const cur = ps.find(([c]) => c === r.last) || ps[ps.length - 1]; return cur && cur[1]; };
+
+function renderStrip() {
+  const live = [...RUNS.values()].filter(r => r.id !== '-' && !r.end);
+  const r = live[live.length - 1] || RUNS.get(lastRunId);
+  const recent = r && r.id !== '-' && (live.length || (r.end && Date.now() / 1000 - r.end < 8));
+  $('#strip').classList.toggle('on', !!recent);
+  if (!recent) return;
+  const running = !r.end;
+  $('#stripSpin').style.display = running ? '' : 'none';
+  $('#stripTitle').textContent = (running ? '' : (r.failed ? '✗ ' : '✓ ')) + r.title + (live.length > 1 ? ` (+${live.length - 1} waiting)` : '');
+  $('#stripStages').innerHTML = stageChips(r);
+  const p = running ? bestProgress(r) : null, bar = $('#stripBar');
+  bar.classList.toggle('indet', running && !p);
+  bar.firstElementChild.style.width = running ? (p ? Math.round(100 * p.done / p.total) + '%' : '35%') : '100%';
+  const lastLine = r.events.filter(e => e.kind !== 'progress' && e.stage !== 'run').pop();
+  $('#stripText').textContent = running
+    ? (p ? `${p.what} ${p.done}/${p.total}` : (lastLine ? lastLine.message.slice(0, 90) : '')) + ` · ${fmtSecs(Date.now() / 1000 - r.start)}`
+    : `finished in ${fmtSecs(r.end - r.start)}`;
+}
+$('#stripLink').onclick = () => document.querySelector('nav button[data-tab="logs"]').click();
+
+function renderLogs() {
+  if (!$('#logs').classList.contains('active')) return;
+  const warnOnly = $('#logLevel').value === 'warn';
+  const runs = [...RUNS.values()].reverse();
+  $('#logEmpty').hidden = runs.length > 0;
+  $('#logRuns').innerHTML = runs.map(r => {
+    const live = !r.end && r.id !== '-', p = bestProgress(r);
+    const evs = r.events.filter(e => !['run_start', 'run_end', 'progress'].includes(e.kind) && (!warnOnly || e.level === 'warn' || e.level === 'error'));
+    const warns = r.events.filter(e => e.level === 'warn').length, errs = r.events.filter(e => e.level === 'error' && e.kind !== 'run_end').length;
+    const open = openRuns.has(r.id) || live || r === runs[0];
+    const secs = (r.end || Date.now() / 1000) - r.start;
+    return `<div class="run ${live ? 'live' : ''}">
+      <div class="head" data-toggle="${esc(r.id)}">
+        ${live ? '<span class="spin"></span>' : r.failed ? pill('failed', 'bad') : pill(r.id === '-' ? 'log' : 'done', r.id === '-' ? '' : 'ok')}
+        <b class="grow">${esc(r.title)}</b>
+        <span class="stages">${stageChips(r)}</span>
+        ${p && live ? `<span class="hint" style="margin:0">${esc(p.what)} ${p.done}/${p.total}<span class="mini"><i style="width:${Math.round(100 * p.done / p.total)}%"></i></span></span>` : ''}
+        ${warns ? pill(warns + ' warning(s)', 'warn') : ''}${errs ? pill(errs + ' error(s)', 'bad') : ''}
+        <span class="hint" style="margin:0">${fmtSecs(secs)}</span>
+      </div>
+      ${open ? `<div class="lines">${evs.map(e => `<div class="ln ${e.level} ${e.kind}">
+        <span class="t">+${(e.time - r.start).toFixed(1)}s</span><span class="st">${esc(e.stage)}</span><span class="m">${esc(e.message)}</span></div>`).join('') ||
+        '<div class="ln"><span class="m hint">No lines at this filter.</span></div>'}</div>` : ''}
+    </div>`;
+  }).join('');
+  if ($('#logFollow').checked) document.querySelectorAll('.lines').forEach(l => l.scrollTop = l.scrollHeight);
+}
+$('#logRuns').onclick = e => {
+  const h = e.target.closest('[data-toggle]'); if (!h) return;
+  const id = h.dataset.toggle; openRuns.has(id) ? openRuns.delete(id) : openRuns.add(id); renderLogs();
+};
+$('#logLevel').onchange = renderLogs;
+$('#logClear').onclick = async () => { await api('/logs', {method: 'DELETE'}); RUNS.clear(); logSeq = 0; renderLogs(); renderStrip(); };
+
+let polling = false;
+async function pollLogs() {
+  if (polling) return; polling = true;
+  try {
+    const r = await api('/logs?since=' + logSeq);
+    if (r.last < logSeq) { RUNS.clear(); logSeq = 0; }          // the server restarted or the log was cleared
+    if (r.events.length) { r.events.forEach(ingest); logSeq = r.events[r.events.length - 1].seq; }
+    renderStrip(); renderLogs();
+  } catch (_) { /* the server is busy or gone: try again on the next tick */ }
+  polling = false;
+}
+setInterval(pollLogs, 700); pollLogs();
 
 /* ---------- init ---------- */
 loadDocs(); loadSpecs().then(names => names.length && openSpec(names.includes('example.yaml') ? 'example.yaml' : names[0]));

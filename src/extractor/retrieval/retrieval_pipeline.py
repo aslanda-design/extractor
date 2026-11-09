@@ -27,6 +27,7 @@ from ..contracts.coverage import CoverageLedger
 from ..contracts.evidence import EvidenceOrigin, EvidencePackage, ExpansionRecord, RetrievalTrace
 from ..contracts.manifest import DocumentManifest
 from ..contracts.passage import IndexedDocument
+from ..events import emit
 from .candidates import gather_candidates
 from .definitions import build_definition_index
 from .expansion import expand
@@ -53,7 +54,10 @@ def gather_evidence(
 
     # 0. Scope: the passages this task may read (its documents, or one record's passages).
     corpus = Corpus.build(documents, request, manifest)
+    emit("S06", f"retrieving evidence for '{request.task_id}' ({profile or 'default'} profile): "
+                f"{len(corpus.passages)} passage(s) in scope")
     if not corpus.passages:
+        emit("S06", f"{request.task_id}: no indexed passages in scope", "warn")
         return EvidencePackage(task_id=request.task_id, trace=trace,
                                gaps=["no indexed passages in scope: nothing could be searched"])
 
@@ -64,10 +68,12 @@ def gather_evidence(
     # 2. Candidates from complementary sources.
     ranked_lists = gather_candidates(request, queries, corpus, tools, settings)
     trace.candidate_lists = {r.name: r.ids for r in ranked_lists}
+    emit("S06", "candidates: " + ", ".join(f"{r.name} {len(r.ids)}" for r in ranked_lists))
 
     # 3. Fuse by rank (never by adding raw scores).
     fused = reciprocal_rank_fusion(ranked_lists, settings.rrf_k)
     trace.fused = [f.passage_id for f in fused]
+    emit("S06", f"fused into {len(fused)} distinct passage(s)")
 
     # 4. Rerank. A small document is reranked whole, so stage one cannot lose evidence.
     trace.short_document_mode = len(corpus.passages) <= settings.short_doc_passages
@@ -78,12 +84,15 @@ def gather_evidence(
         pool = rerank_pool(fused, settings)
     scored = score_passages(queries.rerank, pool, corpus, tools, settings)
     trace.reranked = [(s.passage_id, round(s.score, 4)) for s in scored]
+    emit("S06", f"reranked {len(scored)} passage(s)" + (" (short document: all passages)" if trace.short_document_mode else "")
+                + (f"; best score {scored[0].score:.3f}" if scored else ""))
 
     # 5. Select the primary evidence.
     selection = select(scored, corpus, settings)
     trace.selected = [s.passage_id for s in selection.primary]
     trace.not_selected = selection.reasons or {}
     best = scored[0].score if scored else 0.0
+    emit("S06", f"selected {len(selection.primary)} primary passage(s), {len(selection.qualifiers)} qualifier slot(s)")
 
     entries = [Entry(s.passage_id, EvidenceOrigin.RETRIEVED, [*s.fused.provenance, f"rank:{i}"], s.score)
                for i, s in enumerate(selection.primary, start=1)]
@@ -122,5 +131,9 @@ def gather_evidence(
     entries += extra
 
     # 7. Package within the token budget; whatever does not fit becomes an explicit gap.
-    return build_package(request.task_id, corpus, entries, gaps, trace, settings.budget_tokens,
-                         tools.count_tokens, ledger)
+    package = build_package(request.task_id, corpus, entries, gaps, trace, settings.budget_tokens,
+                            tools.count_tokens, ledger)
+    emit("S06", f"{request.task_id}: evidence ready, {len(package.passages)} passage(s), "
+                f"{package.trace.used_tokens}/{package.trace.budget_tokens} tokens, {len(package.gaps)} gap(s)",
+         "warn" if package.gaps else "ok")
+    return package

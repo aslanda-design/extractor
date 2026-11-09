@@ -7,7 +7,8 @@ nothing was parsed, the fake interpreter abstains, and so on.
 from pathlib import Path
 from typing import Sequence
 
-from ..contracts.candidate import Candidate, InterpretationProposal
+from ..contracts.candidate import InterpretationProposal
+from ..contracts.generation import ModelPrompt, ModelReply
 from ..contracts.document import DocumentRepresentation, IssueKind, ParsingIssue
 from ..contracts.evidence import EvidencePackage
 from ..contracts.manifest import DocumentEntry
@@ -53,10 +54,12 @@ class FakeReranker(RerankerAdapter):
 
 
 class FakeExtractor(ExtractorAdapter):
+    """No model: every call reports that, so a run with it ends `failed`, never `not_found`."""
+
     identity = _FAKE
 
-    def extract(self, task: TaskSpecification, evidence: EvidencePackage) -> list[Candidate]:
-        return []
+    def generate(self, prompt: ModelPrompt) -> ModelReply:
+        return ModelReply(error="fake extractor: no model configured (set models.extraction in the runtime config)")
 
 
 class FakeInterpreter(InterpreterAdapter):

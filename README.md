@@ -61,13 +61,20 @@ python -m extractor index contract.pdf --query "when is the loan repaid"
 # 5. See every step of evidence retrieval for one task, at a chosen depth
 python -m extractor retrieve examples/spec.example.yaml maturity_date --docs contract.pdf --profile deep
 
-# 6. Validate your labeled corpus, and measure parsing / chunking / retrieval quality on it
+# 6. Extract the value of one task: candidates, quotes, reconciliation, every model call
+#    (needs the extraction model, see 3.2: `ollama pull qwen3:8b` and models.extraction in your --config)
+python -m extractor extract examples/spec.example.yaml maturity_date --docs contract.pdf --config runtime.yaml
+
+# 7. Validate your labeled corpus, and measure parsing / chunking / retrieval / extraction quality on it
 python -m extractor eval
 python -m extractor eval --parsing
 python -m extractor eval --indexing
 python -m extractor eval --retrieval --profile light,standard,deep
+python -m extractor eval --extraction --profile light,standard,deep --config runtime.yaml
+python -m extractor eval --extraction --kinds value --tags split:test   # only some field types / case tags
+python -m extractor eval --extraction --cases business_01,business_05   # only some extraction projects (cases)
 
-# 7. Run the whole engine (S01-S04 and S06 real, the rest are stubs returning `failed`)
+# 8. Run the whole engine (S01-S04, S06 and S07 real; interpretation and records are stubs returning `failed`)
 python -m extractor run examples/spec.example.yaml --docs contract.pdf --profile standard
 ```
 
@@ -94,6 +101,30 @@ Vague declarations (an interpretation with no criteria, records with no boundari
 not rejected and not guessed: they are kept as *review* flags on that task.
 Runtime settings (model names, thresholds) are rejected inside the spec on purpose.
 
+#### Writing task descriptions that work better
+
+The `description` (and `rules`) of a value task is the only thing the model knows about the field. Rewriting 13 descriptions
+of the labeled corpus fixed 11 of them with a local 8B model and broke none (same model, same evidence). The patterns that worked:
+
+1. **Say what the answer looks like and what it must NOT be.** "The numeric FCC Facility ID (digits only, printed as
+   'Facility ID No. ...'). The call sign (WQHT-FM) is NOT the ID." Models return the nearest thing they recognise; naming the
+   look-alike they must skip (a call sign, a defined term such as "Distributor", a title) fixed identifiers and names.
+2. **Name the place to read and the thing it is confused with.** "Date of the ORIGINAL agreement, from a recital about that
+   agreement; it is NOT the date of this amendment." "Jurisdiction in the governing-law clause, not where a party is incorporated."
+   Documents repeat the same kind of value many times (dates, parties, amounts); the description must say which one.
+3. **Say what counts as absence.** "If no date is labelled 'Effective Date', report no candidate." "An email address (contains
+   '@') ... if the clause gives only a postal address, report no candidate." Without this the model fills the field with the
+   nearest value (the date the agreement was *made*, a company name instead of an email). This removed every false value it was applied to.
+4. **When the answer is part of a phrase, give its form.** "The language name only (such as 'English'), without the word
+   'version'." Without it the model copies the whole phrase ("Chinese version").
+5. **Keep the original anchors when you reword.** Clause numbers, party names and the two things being compared must stay
+   ("Language version given priority by clause 12.7"). A rewrite that dropped them made the model answer "not found".
+6. **Write each field for its own contract.** The same field name in two specs needs its own wording; one shared sentence
+   regressed a spec whose original text said "return state name only".
+
+What wording cannot fix: text lost by OCR, and amounts in a table whose unit sits in a header ("NTD million"); those are
+parsing problems. Measure every rewording with `python -m extractor eval --extraction` before keeping it.
+
 ### 3.2 Runtime configuration (YAML, optional): *how* to run
 
 Which models, limits and thresholds. Pass it with `--config runtime.yaml`:
@@ -109,12 +140,22 @@ models:
   reranking:
     name: cross_encoder           # or "http_rerank" for Cohere / Jina / vLLM
     params: {model: tomaarsen/Qwen3-Reranker-0.6B-seq-cls}
-  # extraction / interpretation / verification: "fake" for now
+  extraction:                    # the model that reads the evidence (S07). "fake" = no model: tasks end `failed`
+    name: ollama_chat            # local Ollama; or "openai_compatible_chat" for any hosted / vLLM / LM Studio endpoint
+    params: {model: "qwen3:8b", context_tokens: 16384}
+  # interpretation / verification: "fake" for now
 
 indexing:
   chunking: {max_tokens: 350, min_tokens: 40}   # S04 passage size rules (tokens of the embedding model)
   lexical_store: {name: sqlite_fts5}            # swap the databases here
   vector_store: {name: numpy}
+
+extraction:                                     # S07 knobs (WHICH model is models.extraction)
+  max_candidates: 8             # values the model may report per call
+  retries: 1                    # extra attempts when a call fails
+  choose_with_model: true       # the model applies the task precedence rules to conflicting values
+  unresolved_references_block_absence: true   # "see Section 9" (inside the document) that cannot be found keeps an empty answer `uncertain`
+  unresolved_attachments_block_absence: false # "Schedule A" / "Exhibit 3" missing from the supplied files does not block `not_found`
 
 retrieval:                                      # S06 depth of extraction
   profile: standard                             # light | standard | deep | your own
@@ -171,14 +212,16 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `spec/` | S02 | YAML -> checks -> `CompiledSpecification` (normalized tasks + dependency graph with parallel layers). `loader.py` shape, `checks.py` meaning, `dependency_graph.py` ordering, `compiler.py` glue. | A new validity rule: `checks.py` |
 | `parsing/` | S03 | Native text first, OCR where a page needs it. `routing.py` decides per page (and per picture region), `detectors.py` finds problems, `parsing_pipeline.py` is the whole pipeline in one file (native -> completeness check -> OCR ladder), `reconcile.py` compares the layout parse with the PDF's own text layer and restores dropped words, `normalize.py` assigns block ids, `report.py` writes the HTML inspection page, `metrics.py` scores against your labels. | Thresholds: runtime config. Logic: `routing.py`, `detectors.py` |
 | `parsing/backends/` | S03 | The only files that import a parsing library: `opendataloader.py` (native text/structure), `docling_ocr.py` (layout + OCR + tables), `pdfium_renderer.py` (page images). Swap a library by writing another class with the same methods (`backends/base.py`). | One file per library |
-| `adapters/` | S03, S04, S06-S10 | Interfaces for parser / embedder / reranker / extractor / interpreter / verifier, the registry that builds them from the runtime config, no-op fakes, the embedding adapters `embedding_sentence_transformers.py` (any local model) and `embedding_openai.py` (any `/v1/embeddings` endpoint), and the reranker adapters `rerank_cross_encoder.py` (any CrossEncoder) and `rerank_http.py` (Cohere / Jina / vLLM `/rerank`). **The only place model-specific code may live.** | New backend: adapter class + `register_adapter(...)` in `adapters/__init__.py` |
+| `adapters/` | S03, S04, S06-S10 | Interfaces for parser / embedder / reranker / extractor / interpreter / verifier, the registry that builds them from the runtime config, no-op fakes, the embedding adapters `embedding_sentence_transformers.py` (any local model) and `embedding_openai.py` (any `/v1/embeddings` endpoint), and the reranker adapters `rerank_cross_encoder.py` (any CrossEncoder) and `rerank_http.py` (Cohere / Jina / vLLM `/rerank`), and the chat-model adapters `chat_ollama.py` (local Ollama, native schema-constrained output and context size) and `chat_openai.py` (any `/chat/completions` endpoint). **The only place model-specific code may live.** | New backend: adapter class + `register_adapter(...)` in `adapters/__init__.py` |
 | `config/` | - | Runtime settings (`RuntimeConfig`): models, limits, parsing thresholds, storage. | `runtime.py` |
 | `artifacts/` | - | SHA-256 fingerprints and the on-disk store (parsed documents, raw parser output, manifests, original files). Keys include document hash + settings, so a changed input or setting never hits stale cache. | `store.py` |
 | `indexing/` | S04 | **`chunking_pipeline.py` is the whole chunking pipeline in one readable file** (numbered steps, each calling a helper). Helpers: `structure.py` heading hierarchy, `continuation.py` page-break joins, `units.py` / `search_text.py` search view with a map back to the source, `sizing.py` merge/cut rules, `passages.py`, `references.py`. `builder.py` = cache + indexes + coverage ledger. `report.py` = HTML view. | Chunking behaviour: `chunking_pipeline.py` and the helper it calls; sizes: runtime config |
 | `indexing/stores/` | S04 | Pluggable databases: `base.py` interfaces (`LexicalIndex`, `VectorStore`), `sqlite_fts5.py` (BM25), `numpy_store.py` (exact cosine). | New database: subclass + register in `stores/__init__.py` |
 | `retrieval/` | S06 | **`retrieval_pipeline.py` is the whole evidence-retrieval pipeline in one readable file** (queries -> candidates -> fusion -> rerank -> selection -> expansion -> packaging). Helpers: `queries.py`, `candidates.py`, `fusion.py`, `rerank.py`, `selection.py`, `definitions.py`, `expansion.py`, `packaging.py`; `report.py` prints a run's trace. | Retrieval behaviour: `retrieval_pipeline.py` and its helper; depth: `retrieval.profile(s)` in the runtime config |
+| `extraction/` | S07 | **`value_pipeline.py` is the whole value-extraction pipeline in one readable file** (tag passages -> split by context -> ask the model -> read candidates and locate their quotes -> normalize -> derive -> reconcile -> conclude). Helpers: `prompts.py` (what the model is told), `schema.py` (JSON schema it must follow), `partition.py`, `reading.py`, `quotes.py`, `normalize.py` (dates, numbers, amounts by code), `derivation.py` (arithmetic by code, only when the task allows), `reconcile.py`, `choosing.py` (precedence rules), `calling.py`, `report.py` | Behaviour: `value_pipeline.py` and its helper; wording: `prompts.py`; model: `models.extraction` in the runtime config |
 | `pipeline/` | all | **`extraction_pipeline.py` is the whole engine in one readable file**: S01-S13 as numbered calls, real or marked STUB. Each phase turns its STUB line into a call. | `extraction_pipeline.py` |
-| `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing (`parsing_eval.py`) and chunking (`indexing_eval.py`) quality. | `corpus.py` for the label format |
+| `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing (`parsing_eval.py`), chunking (`indexing_eval.py`), retrieval (`retrieval_eval.py`) and value-extraction (`extraction_eval.py`) quality. | `corpus.py` for the label format |
+| `events.py` | all | Activity log every stage writes to (`emit`, `step`, `progress`, `run_scope`); the UI Logs tab and progress strip read it. | New stage: log each numbered step |
 | `cli.py` | - | The command line. |
 
 The graphical interface is **not** part of this package: it lives in the separate top-level `ui/` folder and only calls the modules above. |
@@ -268,6 +311,50 @@ neighbours, reference / definition / qualifier switches, short-document limit, p
 your own under `retrieval.profiles` (optionally `extends:` another one). These are runtime
 settings; they cannot appear in the task YAML.
 
+### How value extraction works (S07)
+
+Open `src/extractor/extraction/value_pipeline.py`: `extract_value` lists the steps in order.
+
+1. **Tag:** the evidence passages get short tags (P1, P2...) that the model can copy reliably.
+2. **Split:** if the evidence does not fit the model's context (`context_tokens` of the adapter), it is
+   cut into several calls in source order; nothing is dropped.
+3. **Ask:** the model must list EVERY value the passages state (not choose one), each with the passage tag,
+   a verbatim quote, the value as written, whom/when it is about and its conditions. The answer is forced
+   into a JSON schema built from the task (a label task can only answer an allowed label).
+4. **Read:** the engine searches each quote in the evidence and maps it to source blocks (page, box).
+   A quote that is not in the evidence is flagged `quote_not_located`, never trusted.
+5. **Normalize:** dates become ISO, numbers/amounts canonical, by code ("thirty (30) days" -> 30,
+   "27th day of March, 2017" -> 2017-03-27, "NTD 12 million" -> 12000000). Unreadable or ambiguous values
+   (`03/04/2027`) stay as written with a `not_normalized` flag; numeric dates are settled only when the
+   document's own dates prove its convention (`1/14/02` proves month-first).
+6. **Screen (code gates):** a candidate is rejected (flag `rejected:<why>`, still visible) when it is redacted
+   (`[***]` -> the task is `uncertain`), its value is not in its own quote, it is only a field label or blank
+   (`Contract No:` -> absence), or a typed answer cannot be read as that type (`uncertain`).
+7. **Derive:** only if the task has `rules.derivation`; the model names an operation over extracted
+   candidates, the engine computes it exactly and marks the result `derived`.
+8. **Verify:** one extra model call per task asks, for every candidate, "does this quote state THE value the
+   field asks for?" It can only remove candidates (a different date, party or period; a label; a formula).
+9. **Reconcile:** candidates that agree merge (spelling, case, hyphenation and a leading "the" do not make a
+   different value); different values are a conflict, decided only by the task's `precedence` rules (the
+   model applies them; it cannot invent one). No rule, or rules that do not decide: `uncertain` with all
+   candidates kept.
+10. **Conclude:** `found`, `absent` (nothing stated AND every call worked AND retrieval left no gap),
+   `uncertain` (conflict, or "absent" that cannot be trusted) or `failed` (model/transport problem).
+
+The result is a **proposal**. Until validation and acceptance exist (phase 6) a found value is returned as
+`uncertain` with the value under `alternatives`; absence follows the task's `on_absent`.
+`python -m extractor extract spec.yaml <task> --docs ...` prints candidates, steps and every model call
+(the full prompts and raw answers are in the json it writes).
+
+**Quality knobs** (`extraction:` in the runtime config, all measurable with `eval --extraction`):
+`screen_candidates`, `verify_candidates`, `passages_per_call` (1 = one focused call per passage),
+`think_extraction` / `think_verification` / `think_choice` (let the model reason first: slower, more accurate).
+
+**Which model:** `models.extraction`. Local: `ollama_chat` (`ollama pull qwen3:8b`; it sends the context
+size to Ollama, whose default of 4096 tokens would silently cut evidence). Hosted or other servers:
+`openai_compatible_chat` with `base_url`, `model`, `api_key_env`. Both force the JSON schema. Moving to a
+bigger model is a config change only.
+
 Image files (png, jpg, tiff) are treated as one OCR page. Other formats currently return an
 explicit `not_parsed` issue.
 
@@ -289,7 +376,11 @@ expected answers). Start from `evaluation/corpus/_template/` and read
   per profile and ablation (full, stage_one, no_rerank, lexical_only, vector_only, no_structural,
   no_qualifier, no_expansion): recall of your labeled evidence at the candidate, selected and package
   level, recall of `contradicts` / `qualifies` evidence on its own, mean passages and tokens per task.
-- `python -m extractor eval --score` scores full engine output (meaningful after phase 5).
+- `python -m extractor eval --extraction [--profile light,standard,deep]` runs retrieval and S07 on every
+  labeled value task and reports, per profile: correct, wrong (and wrong-but-cited: the labeled quote was in
+  the passage the value came from), abstained (`uncertain`), **false absence** (said absent, the label has a
+  value), **false value** (invented one where the label says `not_found`), failed, seconds per task.
+- `python -m extractor eval --score` scores full engine output (status and value accuracy).
 
 ## 6. Rules of the codebase
 
@@ -297,7 +388,7 @@ expected answers). Start from `evaluation/corpus/_template/` and read
 - The YAML says *what*; `RuntimeConfig` says *which model / limits*. Never mix them.
 - Heavy libraries are imported only inside `parsing/backends/*`, the embedding adapters and the store modules, and load lazily.
 - Every pipeline is ONE readable `*_pipeline.py` file with numbered steps calling helpers in their own
-  modules (`chunking_pipeline.py`, `retrieval_pipeline.py`, and the whole engine in `extraction_pipeline.py`).
+  modules (`chunking_pipeline.py`, `retrieval_pipeline.py`, `value_pipeline.py`, and the whole engine in `extraction_pipeline.py`).
   Models, databases and depth are never hard-coded in them.
 - Everything crossing a stage boundary is a type from `contracts/`.
 - Update ARCHITECTURE.md when a contract changes, and PROGRESS.md as phases complete.

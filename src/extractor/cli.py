@@ -5,6 +5,7 @@
     parse     parse one document (S03) and write JSON + an HTML inspection report
     index     chunk + index one document (S04); print sections/passages, write an HTML view
     retrieve  show every step of evidence retrieval (S06) for one task
+    extract   extract the value of one task (S07): candidates, reconciliation, model calls
     run       run the pipeline (stubs for stages not implemented yet)
     eval      validate the evaluation corpus and (optionally) score the engine
 """
@@ -16,6 +17,7 @@ from pathlib import Path
 from .adapters import build_adapters
 from .artifacts import ArtifactStore
 from .config import RuntimeConfig, load_runtime_config
+from .contracts.common import TaskKind
 from .evaluation import CorpusError, load_corpus, run_corpus
 from .pipeline import index_documents, run_files
 from .scope import (
@@ -160,6 +162,36 @@ def cmd_retrieve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_extract(args: argparse.Namespace) -> int:
+    from .extraction import extract_value
+    from .extraction.report import format_proposal
+    from .retrieval.retrieval_pipeline import gather_evidence
+    from .retrieval.tools import build_retrieval_tools
+    from .retrieval.types import request_from_task
+    from .scope import resolve_task_documents
+
+    config = _real_config(args.config)
+    store = ArtifactStore(config.storage.artifact_dir)
+    manifest = build_manifest(_request(args), store)
+    task = compile_specification_file(args.spec).task(args.task)
+    adapters = build_adapters(config, store)
+    indexed = index_documents(manifest, adapters, config, store)
+    document_ids = resolve_task_documents(task, manifest)
+    documents = [indexed[d] for d in document_ids]
+    profile = args.profile or config.retrieval.profile
+    package = gather_evidence(request_from_task(task, document_ids), documents, build_retrieval_tools(config, adapters, store),
+                              config.retrieval.resolve(profile), manifest=manifest, profile=profile)
+    proposal = extract_value(task, package, documents, adapters.extractor, config.extraction_for(profile))
+    print(format_proposal(proposal))
+    out_dir = args.out or Path(config.storage.artifact_dir) / "reports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{task.id}.proposal.json"
+    out.write_text(proposal.model_dump_json(indent=2), encoding="utf-8")
+    print()
+    print(f"json (with the full prompts and raw model answers): {out}")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     config = _real_config(args.config)
     results = run_files(args.spec, _request(args), config, args.profile)
@@ -203,6 +235,16 @@ def cmd_eval(args: argparse.Namespace) -> int:
         print(report.format())
         print("cand% = gold passage reached the reranker, sel% = survived selection, pkg% = in the final package, "
               "exc% = same for contradicting/qualifying evidence")
+    if args.extraction and corpus.cases:
+        from .evaluation.extraction_eval import evaluate_extraction
+
+        config = _real_config(args.config)
+        store = ArtifactStore(config.storage.artifact_dir)
+        profiles = args.profile.split(",") if args.profile else [config.retrieval.profile]
+        kinds = [TaskKind(k) for k in args.kinds.split(",")] if args.kinds else None
+        tags = args.tags.split(",") if args.tags else None
+        case_ids = args.cases.split(",") if args.cases else None
+        print(evaluate_extraction(corpus, config, build_adapters(config, store), store, profiles, kinds, tags, case_ids).format())
     if args.score and corpus.cases:
         report = run_corpus(corpus, load_runtime_config(args.config))
         print(f"status accuracy: {report.status_accuracy:.0%}  value accuracy: {report.value_accuracy}")
@@ -254,13 +296,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", type=Path, help="runtime config YAML")
     p.set_defaults(func=cmd_retrieve)
 
+    p = sub.add_parser("extract", help="extract the value of one task and show candidates, reconciliation and model calls")
+    p.add_argument("spec", type=Path)
+    p.add_argument("task", help="id of a value task in the spec")
+    p.add_argument("--docs", nargs="*", help="document files")
+    p.add_argument("--request", type=Path, help="request YAML (documents, relationships, ...)")
+    p.add_argument("--profile", help="retrieval depth: light | standard | deep | one of your own")
+    p.add_argument("--out", type=Path, help="output folder (default: <artifact_dir>/reports)")
+    p.add_argument("--config", type=Path, help="runtime config YAML (models.extraction selects the model)")
+    p.set_defaults(func=cmd_extract)
+
     p = sub.add_parser("eval", help="validate (and score) the evaluation corpus")
     p.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     p.add_argument("--score", action="store_true", help="also run the engine and score it")
     p.add_argument("--parsing", action="store_true", help="measure parsing quality on the corpus documents")
     p.add_argument("--indexing", action="store_true", help="measure chunk/quote containment on the corpus documents")
     p.add_argument("--retrieval", action="store_true", help="measure evidence recall of retrieval, with ablations")
+    p.add_argument("--extraction", action="store_true", help="measure value extraction (correct / wrong / false absence...)")
     p.add_argument("--profile", help="retrieval profile(s) to evaluate, comma separated (e.g. light,standard,deep)")
+    p.add_argument("--kinds", help="--extraction only: task kinds to score, comma separated (value,interpretation,records; default: all implemented)")
+    p.add_argument("--tags", help="--extraction only: only cases having ALL these tags, comma separated (e.g. split:test,digital)")
+    p.add_argument("--cases", help="--extraction only: only these case ids, comma separated (e.g. business_01,business_05)")
     p.add_argument("--variants", help="comma separated ablations (default: all): full,stage_one,no_rerank,...")
     p.add_argument("--config", type=Path, help="runtime config YAML")
     p.set_defaults(func=cmd_eval)

@@ -9,9 +9,14 @@ the engine knows nothing about this folder. The workspace is a plain folder:
     <workspace>/runtime.yaml  settings edited in the Settings tab
 """
 
+import functools
+import inspect
 import re
 import threading
 import time
+from collections import Counter
+from datetime import datetime
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -22,9 +27,13 @@ from extractor.artifacts import ArtifactStore, fingerprint
 from extractor.config import RuntimeConfig
 from extractor.config.runtime import RetrievalSettings
 from extractor.contracts.common import TaskKind
+from extractor.contracts.task import TaskSpecification
+from extractor.extraction import extract_value
+from extractor.events import LOG, emit, run_scope
 from extractor.contracts.specification import SpecificationFile
 from extractor.contracts.task import LabelSpec
 from extractor.evaluation import CorpusError, load_corpus
+from extractor.evaluation.extraction_eval import IMPLEMENTED_KINDS, evaluate_extraction
 from extractor.evaluation.indexing_eval import evaluate_indexing
 from extractor.evaluation.parsing_eval import evaluate_parsing
 from extractor.indexing.builder import IndexBuilder
@@ -36,7 +45,9 @@ from extractor.pipeline import index_documents, run_pipeline
 from extractor.retrieval.retrieval_pipeline import gather_evidence
 from extractor.retrieval.types import RetrievalRequest, RetrievalTools, request_from_field, request_from_task
 from extractor.scope import DocumentRequest, ManifestError, build_manifest
-from extractor.spec import SpecificationError, compile_specification, parse_specification
+from extractor.spec import SpecificationError, compile_specification, compile_specification_file, parse_specification
+
+from history import RunHistory
 
 PARSEABLE = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 EXAMPLE_SPEC = Path(__file__).parent.parent / "examples" / "spec.example.yaml"
@@ -54,6 +65,37 @@ def _safe_name(name: str) -> str:
     return base
 
 
+def recorded(kind: str):
+    """Store the run in the history (params, settings, timing, result or error) and add `run_id` to the result.
+
+    A run that fails before its job started (bad input such as "type a query") is not recorded; one that fails
+    inside the job is, with status `error`, so usage and failures can be tracked.
+    """
+
+    def decorate(fn):
+        signature = inspect.signature(fn)
+
+        @functools.wraps(fn)
+        def wrapper(self, *args, **kwargs):
+            bound = signature.bind(self, *args, **kwargs)
+            bound.apply_defaults()
+            params = {k: v for k, v in bound.arguments.items() if k != "self"}
+            started = datetime.now()
+            self._job_started = False
+            try:
+                result = fn(self, *args, **kwargs)
+            except Exception as exc:
+                if self._job_started:
+                    self.runs.record(kind, params, self._settings_summary(), started, "error", error=f"{type(exc).__name__}: {exc}")
+                raise
+            run_id = self.runs.record(kind, params, self._settings_summary(), started, "ok", result)
+            return {**result, "run_id": run_id}
+
+        return wrapper
+
+    return decorate
+
+
 class Workspace:
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -62,12 +104,58 @@ class Workspace:
         self.reports = self.root / "reports"
         for d in (self.uploads, self.specs, self.reports):
             d.mkdir(parents=True, exist_ok=True)
+        self.runs = RunHistory(self.root / "history")  # every job the UI ran, kept across restarts
+        self.runs.import_legacy(self.root / "corpus_history")
+        self._job_started = False
         self.config_path = self.root / "runtime.yaml"
         self.store = ArtifactStore(self.root.parent)  # shares models/caches with the CLI
         self._lock = threading.Lock()  # one parse at a time: the GPU is shared
         self._builders: dict[str, tuple] = {}  # config fingerprint -> (IndexBuilder, AdapterSet); keeps models loaded
         if not (self.specs / "example.yaml").exists() and EXAMPLE_SPEC.exists():
             (self.specs / "example.yaml").write_text(EXAMPLE_SPEC.read_text(encoding="utf-8"), encoding="utf-8")
+
+    @contextmanager
+    def _job(self, title: str):
+        """One logged job at a time (the GPU is shared): a run in the Logs tab, queued if another one is running."""
+        with run_scope(title):
+            if self._lock.locked():
+                emit("ui", "another job is running; waiting for it to finish", "warn")
+            with self._lock:
+                self._job_started = True
+                yield
+
+    def logs(self, since: int = 0, run: str | None = None) -> dict:
+        """Engine events newer than `since` (the Logs tab polls this)."""
+        return {"events": [e.as_dict() for e in LOG.since(since, run)], "last": LOG.last_seq()}
+
+    def clear_logs(self) -> None:
+        LOG.clear()
+
+    def _settings_summary(self) -> dict:
+        """The models and retrieval profile a run used, for the history."""
+        try:
+            config = self.get_config()
+            models = {k: v["name"] for k, v in config.models.model_dump().items() if isinstance(v, dict) and "name" in v}
+            return {**models, "retrieval_profile": config.retrieval.profile}
+        except Exception:  # the history must never break a run
+            return {}
+
+    # --- history (every parse, index, search, retrieve, extract, run and corpus measure) ---------
+
+    def history(self, kind: str | None = None, group: str | None = None) -> list[dict]:
+        return self.runs.list(kind, group)
+
+    def history_run(self, run_id: str) -> dict:
+        record = self.runs.get(_safe_name(run_id).removesuffix(".json"))
+        if record is None:
+            raise UiError(f"no saved run '{run_id}'")
+        return record
+
+    def delete_history_run(self, run_id: str) -> None:
+        self.runs.delete(_safe_name(run_id).removesuffix(".json"))
+
+    def clear_history(self, kind: str | None = None, group: str | None = None) -> int:
+        return self.runs.clear(kind, group)
 
     # --- settings ---------------------------------------------------------------
 
@@ -83,7 +171,8 @@ class Workspace:
     def options(self) -> dict:
         """Names the UI can offer (everything registered in the engine) and the retrieval profiles."""
         retrieval = self.get_config().retrieval
-        return {"embedding": registered_adapters(Capability.EMBEDDING),
+        return {"extraction": registered_adapters(Capability.EXTRACTION),
+                "embedding": registered_adapters(Capability.EMBEDDING),
                 "reranking": registered_adapters(Capability.RERANKING),
                 "stores": registered_stores(),
                 "retrieval": {"active": retrieval.profile,
@@ -145,6 +234,7 @@ class Workspace:
                 })
         return out
 
+    @recorded("parse")
     def parse(self, name: str) -> dict:
         """Parse one uploaded document; writes the HTML report and JSON, returns a summary."""
         path = self.document_path(name)
@@ -152,7 +242,7 @@ class Workspace:
             raise UiError(f"the parser supports PDF and image files, not '{path.suffix}'")
         config = self.get_config()
         started = time.time()
-        with self._lock:
+        with self._job(f"Parse {name}"):
             entry = build_manifest(DocumentRequest.from_paths([path]), self.store).documents[0]
             parser = build_adapters(config, self.store).parser
             rep = parser.parse(entry, path)
@@ -183,6 +273,7 @@ class Workspace:
 
     # --- chunking and indexes (S04) -----------------------------------------------
 
+    @recorded("index")
     def index(self, name: str) -> dict:
         """Parse (cached) + chunk + index one document; writes the HTML view, returns a summary."""
         path = self.document_path(name)
@@ -190,7 +281,7 @@ class Workspace:
             raise UiError(f"the parser supports PDF and image files, not '{path.suffix}'")
         config = self.get_config()
         started = time.time()
-        with self._lock:
+        with self._job(f"Chunk and index {name}"):
             entry = build_manifest(DocumentRequest.from_paths([path]), self.store).documents[0]
             builder, _ = self._builder(config)
             doc = builder.index(entry, path)
@@ -217,13 +308,14 @@ class Workspace:
             "unresolved_gaps": [e.note for e in doc.coverage.unresolved()],
         }
 
+    @recorded("search")
     def search(self, name: str, query: str, k: int = 5) -> dict:
         """Run a query against the document's lexical and vector indexes."""
         if not query.strip():
             raise UiError("type a query")
         path = self.document_path(name)
         config = self.get_config()
-        with self._lock:
+        with self._job(f"Search {name}"):
             entry = build_manifest(DocumentRequest.from_paths([path]), self.store).documents[0]
             builder, adapters = self._builder(config)
             doc = builder.index(entry, path)  # cached after the first time
@@ -248,13 +340,14 @@ class Workspace:
         items = []
         for task in spec.tasks:
             if task.kind == TaskKind.RECORDS:  # records are found over the whole scope; their FIELDS use retrieval
-                requests = [(f"{task.id} \u203a {f.id}", request_from_field(f, task)) for f in task.record.fields]
+                requests = [(f"{task.id} \u203a {f.id}", request_from_field(f, task), f) for f in task.record.fields]
             else:
-                requests = [(task.id, request_from_task(task))]
-            for label, r in requests:
+                requests = [(task.id, request_from_task(task), task)]
+            for label, r, source in requests:
                 items.append({"id": r.task_id, "label": label, "kind": r.kind.value, "text": r.description,
                               "entity": r.entity, "time": r.time,
-                              "labels": [l.model_dump(mode="json") for l in r.labels]})
+                              "labels": [l.model_dump(mode="json") for l in r.labels],
+                              "output": source.output.model_dump(mode="json"), "rules": source.rules.model_dump(mode="json")})
         return items
 
     def _retrieval_settings(self, config: RuntimeConfig, profile: str | None, overrides: dict | None) -> RetrievalSettings:
@@ -266,6 +359,7 @@ class Workspace:
         except ValueError as exc:
             raise UiError(str(exc)) from None
 
+    @recorded("retrieve")
     def retrieve(self, documents: list[str], text: str, entity: str | None = None, time_scope: str | None = None,
                  labels: list[dict] | None = None, profile: str | None = None, overrides: dict | None = None) -> dict:
         """Run evidence retrieval for a free-text request and return every step for display."""
@@ -285,7 +379,7 @@ class Workspace:
         by_name = {e.filename: e for e in manifest.documents}
 
         started = time.time()
-        with self._lock:
+        with self._job(f"Retrieve evidence from {len(documents)} document(s)"):
             builder, adapters = self._builder(config)
             indexed = [builder.index(by_name[p.name], p) for p in paths]  # parse + chunk + embed, cached
             tools = RetrievalTools(lexical=builder.lexical, vectors=builder.vectors,
@@ -336,6 +430,77 @@ class Workspace:
             "gaps": package.gaps,
         }
 
+    # --- value extraction (S07) -------------------------------------------------------
+
+    @staticmethod
+    def _task_from_form(form: dict) -> TaskSpecification:
+        """A value task described in the UI form (the same fields as the YAML)."""
+        labels = [{"name": l["name"], "meaning": l.get("meaning") or l["name"]} for l in form.get("labels") or [] if l.get("name")]
+        output = {"type": "label" if labels else form.get("type") or "string",  # allowed answers make it a label task
+                  "cardinality": form.get("cardinality") or "one", "labels": labels}
+        rules = {k: form[k].strip() for k in ("normalization", "derivation", "ambiguity") if (form.get(k) or "").strip()}
+        rules["precedence"] = [l.strip() for l in (form.get("precedence") or "").split("\n") if l.strip()]
+        rules["on_absent"] = form.get("on_absent") or "not_found"
+        try:
+            return TaskSpecification(
+                id="query", kind=TaskKind.VALUE, description=(form.get("text") or "").strip(), output=output,
+                scope={"entity": (form.get("entity") or "").strip() or None, "time": (form.get("time") or "").strip() or None},
+                rules=rules)
+        except ValidationError as exc:
+            raise UiError("; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())) from None
+
+    @recorded("extract")
+    def extract(self, documents: list[str], form: dict, profile: str | None = None, overrides: dict | None = None) -> dict:
+        """Retrieve evidence for a value task, run S07 on it and return every step for display."""
+        if not (form.get("text") or "").strip():
+            raise UiError("type the question to answer")
+        if not documents:
+            raise UiError("select at least one document")
+        task = self._task_from_form(form)
+        paths = [self.document_path(d) for d in documents]
+        config = self.get_config()
+        settings = self._retrieval_settings(config, profile, overrides)
+        profile_name = profile or config.retrieval.profile
+        try:
+            manifest = build_manifest(DocumentRequest.from_paths(paths), self.store)
+        except ManifestError as exc:
+            raise UiError(str(exc)) from None
+        by_name = {e.filename: e for e in manifest.documents}
+
+        started = time.time()
+        with self._job(f"Extract a value from {len(documents)} document(s)"):
+            builder, adapters = self._builder(config)
+            indexed = [builder.index(by_name[p.name], p) for p in paths]
+            tools = RetrievalTools(lexical=builder.lexical, vectors=builder.vectors,
+                                   embedder=adapters.embedder, reranker=adapters.reranker)
+            package = gather_evidence(request_from_task(task), indexed, tools, settings, manifest=manifest, profile=profile_name)
+            retrieved_at = time.time()
+            proposal = extract_value(task, package, indexed, adapters.extractor, config.extraction_for(profile_name))
+        filenames = {e.document_id: e.filename for e in manifest.documents}
+        passages = {p.passage_id: p for d in indexed for p in d.passages}
+        evidence = self._evidence_view(package, indexed, filenames, settings, round(retrieved_at - started, 1))
+        chosen = {c.candidate_id for c in proposal.chosen}
+
+        def candidate(c) -> dict:
+            p = passages.get(c.passage_id or "")
+            return {**c.model_dump(mode="json"), "chosen": c.candidate_id in chosen,
+                    "short": c.passage_id.rsplit(":", 1)[-1] if c.passage_id else None,
+                    "document": filenames.get(p.document_id) if p else None, "pages": p.pages if p else []}
+
+        return {
+            "task": task.model_dump(mode="json"), "model": adapters.extractor.identity.label(),
+            "outcome": proposal.outcome.value, "value": proposal.value, "reason": proposal.reason, "steps": proposal.steps,
+            "gaps": proposal.gaps, "candidates": [candidate(c) for c in proposal.candidates],
+            "calls": [{"purpose": c.purpose, "system": c.prompt.system, "user": c.prompt.user, "schema": c.prompt.json_schema,
+                       "raw": c.reply.raw, "error": c.reply.error, "seconds": c.reply.seconds,
+                       "prompt_tokens": c.reply.prompt_tokens, "completion_tokens": c.reply.completion_tokens}
+                      for c in proposal.calls],
+            "evidence": evidence, "seconds": round(time.time() - started, 1),
+            "would_be": ("uncertain (a found value is not accepted until validation exists: phase 6)"
+                         if proposal.outcome.value == "found"
+                         else {"absent": task.rules.on_absent.value, "uncertain": "uncertain", "failed": "failed"}[proposal.outcome.value]),
+        }
+
     # --- specifications ---------------------------------------------------------
 
     def list_specs(self) -> list[str]:
@@ -373,6 +538,7 @@ class Workspace:
 
     # --- run --------------------------------------------------------------------
 
+    @recorded("run")
     def run(self, spec_name: str, documents: list[str]) -> dict:
         if not documents:
             raise UiError("select at least one document")
@@ -386,10 +552,10 @@ class Workspace:
             manifest = build_manifest(DocumentRequest.from_paths(paths), self.store)
         except ManifestError as exc:
             raise UiError(str(exc)) from None
-        with self._lock:
+        with self._job(f"Run {spec_name} on {len(documents)} document(s)"):
             adapters = build_adapters(config, self.store)
             indexed = index_documents(manifest, adapters, config, self.store)  # S03 + S04 (cached)
-            results = run_pipeline(spec, manifest, adapters, config, indexed)
+            results = run_pipeline(spec, manifest, adapters, config, indexed, store=self.store)
         return {
             "manifest": manifest.model_dump(mode="json"),
             "results": [r.model_dump(mode="json") for r in results],
@@ -402,24 +568,54 @@ class Workspace:
             corpus = load_corpus(CORPUS_DIR)
         except CorpusError as exc:
             return {"ok": False, "problems": str(exc).splitlines()}
-        return {"ok": True, "cases": [c.case_id for c in corpus.cases], "path": str(CORPUS_DIR)}
+        kinds = Counter(k for c in corpus.cases for k in self._expected_kinds(c))
+        return {"ok": True, "cases": [c.case_id for c in corpus.cases],
+                "case_info": [{"id": c.case_id, "documents": c.documents, "spec": c.spec, "tags": c.tags} for c in corpus.cases], "path": str(CORPUS_DIR),
+                "tags": sorted({t for c in corpus.cases for t in c.tags}),
+                "kinds": [{"kind": k.value, "labeled": kinds.get(k, 0), "implemented": k in IMPLEMENTED_KINDS} for k in TaskKind]}
 
+    @staticmethod
+    def _expected_kinds(case) -> list[TaskKind]:
+        """Kind of every labeled task of a case, read from its spec."""
+        spec = compile_specification_file(CORPUS_DIR / case.spec)
+        return [t.kind for t in spec.tasks if t.id in case.expected]
+
+    @recorded("corpus.indexing")
     def corpus_indexing(self) -> dict:
         corpus = load_corpus(CORPUS_DIR)
         if not corpus.cases:
             raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
         config = self.get_config()
-        with self._lock:
+        with self._job("Measure chunking quality"):
             builder, _ = self._builder(config)
             metrics = evaluate_indexing(corpus, builder)
         return {"metrics": metrics.model_dump(mode="json"), "containment": metrics.containment}
 
+    @recorded("corpus.extraction")
+    def corpus_extraction(self, kinds: list[str] | None = None, tags: list[str] | None = None,
+                          cases: list[str] | None = None) -> dict:
+        corpus = load_corpus(CORPUS_DIR)
+        if not corpus.cases:
+            raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
+        config = self.get_config()
+        with self._job("Measure value extraction"):
+            _, adapters = self._builder(config)
+            try:
+                report = evaluate_extraction(corpus, config, adapters, self.store, [config.retrieval.profile],
+                                             [TaskKind(k) for k in kinds or []] or None, tags or None, cases or None)
+            except ValueError as exc:
+                raise UiError(str(exc))
+        return {"rows": [r.model_dump(mode="json") for r in report.rows],
+                "misses": [o.model_dump(mode="json") for o in report.outcomes
+                           if o.outcome not in ("correct", "correct_absence", "correct_uncertain")]}
+
+    @recorded("corpus.parsing")
     def corpus_parsing(self) -> dict:
         corpus = load_corpus(CORPUS_DIR)
         if not corpus.cases:
             raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
         config = self.get_config()
-        with self._lock:
+        with self._job("Measure parsing quality"):
             parser = build_adapters(config, self.store).parser
             metrics, checks = evaluate_parsing(corpus, parser)
         return {

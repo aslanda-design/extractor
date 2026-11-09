@@ -23,12 +23,15 @@ scratch*/
 
 # --- Your data: never commit documents or labeled cases ------------------------------------
 # (the corpus README and _template/ stay tracked; everything you add under these folders does not)
+evaluation/corpus/_template/*
 evaluation/corpus/documents/*
 !evaluation/corpus/documents/.gitkeep
 evaluation/corpus/cases/*
 !evaluation/corpus/cases/.gitkeep
 evaluation/corpus/specs/*
 !evaluation/corpus/specs/.gitkeep
+evaluation/corpus/provenance/*
+!evaluation/corpus/provenance/.gitkeep
 # document and image files anywhere (uploads, test PDFs, scans); remove a line if you need a sample in the repo
 *.pdf
 *.png

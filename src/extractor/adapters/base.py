@@ -18,6 +18,7 @@ from ..contracts.candidate import Candidate, InterpretationProposal
 from ..contracts.common import StrictModel
 from ..contracts.document import DocumentRepresentation
 from ..contracts.evidence import EvidencePackage
+from ..contracts.generation import ModelPrompt, ModelReply
 from ..contracts.manifest import DocumentEntry
 from ..contracts.task import TaskSpecification
 from ..contracts.validation import ValidationFinding
@@ -121,10 +122,31 @@ class RerankerAdapter(Adapter):
 
 
 class ExtractorAdapter(Adapter):
+    """A generative model that answers a prompt with JSON following a schema.
+
+    The engine writes the prompt and decides what to do with the answer
+    (extraction/); the adapter only talks to one model or server. Swap the
+    model, runtime or provider by changing `models.extraction` in the runtime config.
+    """
+
     capability = Capability.EXTRACTION
 
     @abstractmethod
-    def extract(self, task: TaskSpecification, evidence: EvidencePackage) -> list[Candidate]: ...
+    def generate(self, prompt: ModelPrompt) -> ModelReply:
+        """Never raises for model/transport problems: they come back as `ModelReply.error`."""
+
+    @property
+    def context_tokens(self) -> int:
+        """How many tokens (prompt + answer) one call can hold."""
+        return self.capabilities.max_context_tokens or 8192
+
+    @property
+    def output_tokens(self) -> int:
+        return self.capabilities.max_output_tokens or 1024
+
+    def count_tokens(self, text: str) -> int:
+        """Default: a rough 4-characters-per-token estimate."""
+        return max(1, (len(text) + 3) // 4) if text else 0
 
 
 class InterpreterAdapter(Adapter):

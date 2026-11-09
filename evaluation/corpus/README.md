@@ -9,6 +9,7 @@ evaluation/corpus/
   specs/       the extraction YAML(s) the cases use
   cases/       one YAML per case: documents + spec + expected answers
   _template/   copy-and-edit examples (ignored by the loader)
+  provenance/  where imported labels came from (ignored by the loader)
 ```
 
 ## How to add a case
@@ -41,6 +42,10 @@ Use `tags` to mark them so results can be broken down later. Keep related
 templates/source families together when you decide which cases are held out.
 
 ## Scoring
+
+`python -m extractor eval --extraction --kinds value --tags split:test` scores only the chosen task kinds
+(`value`, `interpretation`, `records`; only implemented ones are accepted) on the cases with those tags; add `--cases business_01,business_05` to pick extraction projects. The 10 CUAD
+cases carry `split:train|validation|test` tags (the proposed holdout: keep `test` untouched while tuning).
 
 `python -m extractor eval --score` runs the engine over every case and reports
 status and value accuracy. Stage-specific metrics are added by later phases.

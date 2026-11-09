@@ -39,13 +39,20 @@ def _heading_labels(title: str) -> set[str]:
     return labels
 
 
+_NUMBERED_START = re.compile(r"^\s*(\d+(?:\.\d+)*)[.)]\s+\S")
+
+
 def build_label_index(blocks: list[SourceBlock]) -> dict[str, str]:
-    """label -> heading block id (the first heading wins)."""
+    """label -> block id. Headings win; a clause the parser did not mark as a heading ("1. Services ..." read as a
+    list item or paragraph) still answers to its number, so "see Section 1" does not stay unresolved."""
     index: dict[str, str] = {}
     for b in blocks:
         if b.kind == BlockKind.HEADING:
             for label in _heading_labels(b.text):
                 index.setdefault(label, b.block_id)
+    for b in blocks:
+        if b.kind != BlockKind.HEADING and (m := _NUMBERED_START.match(b.text)):
+            index.setdefault(m.group(1), b.block_id)
     return index
 
 

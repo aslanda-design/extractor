@@ -180,18 +180,58 @@ class RetrievalConfig(StrictModel):
         return self
 
 
+class ExtractionSettings(StrictModel):
+    """S07 knobs: how the value-extraction step talks to the model (WHICH model is `models.extraction`)."""
+
+    max_candidates: int = Field(default=8, ge=1)  # candidates the model may report per call
+    retries: int = Field(default=1, ge=0)  # extra attempts when a call fails or returns unusable JSON
+    prompt_margin: float = Field(default=0.1, ge=0.0, lt=0.9)  # share of the context left free (token counts are estimates)
+    choose_with_model: bool = True  # let the model pick among conflicting candidates when the task gives precedence rules
+    unresolved_references_block_absence: bool = True  # "see Section 9" that could not be found keeps an empty answer `uncertain`
+    unresolved_attachments_block_absence: bool = False  # same for "Schedule A" / "Exhibit 3" / Appendix / Annex: attachments missing from the supplied files
+    passages_per_call: int | None = Field(default=None, ge=1)  # None = as many passages per call as the context allows; 1 = one call per passage (more focus, more calls)
+    think_extraction: bool | None = None  # None = the adapter default; True = reason before answering (slower)
+    think_verification: bool | None = None
+    think_choice: bool | None = None
+    screen_candidates: bool = True  # deterministic gates: redacted, value not in its quote, blank field, unreadable typed value
+    verify_candidates: bool = True  # one extra model call removes candidates that do not answer THE FIELD
+    allow_unlocated_quotes: bool = True  # keep candidates whose quote is not in the evidence (flagged), instead of dropping them
+
+
+# Extraction depth that goes with each retrieval profile. `deep` lets the model reason (measured: fixes about 40% of the
+# errors left at standard depth, at 2-3x the time). Override or add profiles under `extraction_profiles:` in the runtime config.
+BUILTIN_EXTRACTION_PROFILES: dict[str, dict] = {
+    "deep": {"think_extraction": True, "think_verification": True},
+}
+
+
 class RuntimeConfig(StrictModel):
     models: ModelsConfig = ModelsConfig()
     execution: ExecutionConfig = ExecutionConfig()
     parsing: ParsingConfig = ParsingConfig()
     indexing: IndexingConfig = IndexingConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
+    extraction: ExtractionSettings = ExtractionSettings()
+    extraction_profiles: dict[str, dict] = {}  # profile name -> ExtractionSettings fields to change at that depth
     storage: StorageConfig = StorageConfig()
 
     def fingerprint(self) -> str:
         """Identity of the settings that can change results (storage path excluded)."""
         return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking,
-                           self.retrieval.resolve())
+                           self.retrieval.resolve(), self.extraction, self.extraction_profiles)
+
+    def extraction_for(self, profile: str | None = None) -> ExtractionSettings:
+        """S07 settings at the given depth: the base `extraction:` block, the built-in profile of that name, then yours."""
+        name = profile or self.retrieval.profile
+        changes = {**BUILTIN_EXTRACTION_PROFILES.get(name, {}), **self.extraction_profiles.get(name, {})}
+        return self.extraction.model_copy(update=changes) if not changes else ExtractionSettings.model_validate(
+            {**self.extraction.model_dump(), **changes})
+
+    @model_validator(mode="after")
+    def _validate_extraction_profiles(self):
+        for name in self.extraction_profiles:
+            self.extraction_for(name)  # fail at config load, not in the middle of a run
+        return self
 
     def parsing_fingerprint(self) -> str:
         """Cache key part for parsed documents: only parser choice + parsing settings."""
