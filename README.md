@@ -70,7 +70,9 @@ python -m extractor eval
 python -m extractor eval --parsing
 python -m extractor eval --indexing
 python -m extractor eval --retrieval --profile light,standard,deep
+python -m extractor eval --overlap --profile standard                   # how much evidence the tasks of each case share (no chat model)
 python -m extractor eval --extraction --profile light,standard,deep --config runtime.yaml
+python -m extractor eval --extraction --grouping off,auto               # A/B: one call per task vs tasks that share evidence sharing a call
 python -m extractor eval --extraction --kinds value --tags split:test   # only some field types / case tags
 python -m extractor eval --extraction --cases business_01,business_05   # only some extraction projects (cases)
 
@@ -233,6 +235,7 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `artifacts/` | - | SHA-256 fingerprints and the on-disk store (parsed documents, raw parser output, manifests, original files). Keys include document hash + settings, so a changed input or setting never hits stale cache. | `store.py` |
 | `indexing/` | S04 | **`chunking_pipeline.py` is the whole chunking pipeline in one readable file** (numbered steps, each calling a helper). Helpers: `structure.py` heading hierarchy, `continuation.py` page-break joins, `units.py` / `search_text.py` search view with a map back to the source, `sizing.py` merge/cut rules, `passages.py`, `references.py`. `builder.py` = cache + indexes + coverage ledger. `report.py` = HTML view. | Chunking behaviour: `chunking_pipeline.py` and the helper it calls; sizes: runtime config |
 | `indexing/stores/` | S04 | Pluggable databases: `base.py` interfaces (`LexicalIndex`, `VectorStore`), `sqlite_fts5.py` (BM25), `numpy_store.py` (exact cosine). | New database: subclass + register in `stores/__init__.py` |
+| `planning/` | S05 | **`planning_pipeline.py` is the whole planning stage in one readable file**: after retrieval and before any model call, it measures how much evidence the value tasks share (`overlap.py`) and, with `planning.grouping: auto`, decides which tasks are answered by the same model call (`grouping.py`; `extraction/capacity.py` says what one call can hold). | Planning behaviour: `planning_pipeline.py` and `grouping.py`; limits: `planning:` in the runtime config |
 | `retrieval/` | S06 | **`retrieval_pipeline.py` is the whole evidence-retrieval pipeline in one readable file** (queries -> candidates -> fusion -> rerank -> selection -> expansion -> packaging). Helpers: `queries.py`, `candidates.py`, `fusion.py`, `rerank.py`, `selection.py`, `definitions.py`, `expansion.py`, `packaging.py`; `report.py` prints a run's trace. | Retrieval behaviour: `retrieval_pipeline.py` and its helper; depth: `retrieval.profile(s)` in the runtime config |
 | `extraction/` | S07 | **`value_pipeline.py` is the whole value-extraction pipeline in one readable file** (tag passages -> split by context -> ask the model -> read candidates and locate their quotes -> normalize -> derive -> reconcile -> conclude). Helpers: `prompts.py` (what the model is told), `schema.py` (JSON schema it must follow), `partition.py`, `reading.py`, `quotes.py`, `normalize.py` (dates, numbers, amounts by code), `derivation.py` (arithmetic by code, only when the task allows), `reconcile.py`, `choosing.py` (precedence rules), `calling.py`, `report.py` | Behaviour: `value_pipeline.py` and its helper; wording: `prompts.py`; model: `models.extraction` in the runtime config |
 | `validation/` | S10, S11 | **`validation_pipeline.py` is the whole validation and acceptance stage in one readable file** (structure -> grounding -> normalization -> consistency -> coverage / risk register -> optional semantic check -> qualification -> policy -> decision). Helpers: `structure.py`, `grounding.py`, `numeric.py`, `consistency.py`, `coverage_check.py`, `semantic.py`, `policy.py` (profiles), `qualification.py`, `findings.py` | Behaviour: `validation_pipeline.py` and the layer it calls; which findings block: `policy.py` or `acceptance:` in the runtime config |
@@ -365,7 +368,7 @@ false absences and the blocking findings; `--save` / `--from` make tuning a prof
 
 ### How value extraction works (S07)
 
-Open `src/extractor/extraction/value_pipeline.py`: `extract_value` lists the steps in order.
+Open `src/extractor/extraction/value_pipeline.py`: `extract_value` is `ask_task` (steps 1-4) then `conclude_task` (steps 5-10).
 
 1. **Tag:** the evidence passages get short tags (P1, P2...) that the model can copy reliably.
 2. **Split:** if the evidence does not fit the model's context (`context_tokens` of the adapter), it is
@@ -401,6 +404,14 @@ The result is a **proposal**. Until validation and acceptance exist (phase 6) a 
 **Quality knobs** (`extraction:` in the runtime config, all measurable with `eval --extraction`):
 `screen_candidates`, `verify_candidates`, `passages_per_call` (1 = one focused call per passage),
 `think_extraction` / `think_verification` / `think_choice` (let the model reason first: slower, more accurate).
+
+**Shared calls** (`planning:` in the runtime config, off by default): `grouping: auto` answers tasks that share most of their
+evidence with ONE model call (fewer calls, less repeated reading). Each task still reads only its own evidence, is verified
+and validated on its own, and is asked again alone whenever the shared answer cannot be trusted (call failed, field missing,
+nothing found, a value taken from another task's passage). Limits are plain numbers (`max_fields_per_call`,
+`max_foreign_share`, `output_tokens_per_field`, `reask_absent`), so a bigger model only needs different numbers.
+Measure it before adopting it: `python -m extractor eval --extraction --grouping off,auto` (or the Corpus tab's
+"compare grouping") runs the same evidence both ways and lists every task whose result changed.
 
 **Which model:** `models.extraction`. Local: `ollama_chat` (`ollama pull qwen3:8b`; it sends the context
 size to Ollama, whose default of 4096 tokens would silently cut evidence). Hosted or other servers:

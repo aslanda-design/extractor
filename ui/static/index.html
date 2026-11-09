@@ -220,6 +220,8 @@ tr.dim td{color:var(--muted)}
     <div class="row" style="margin:10px 0">
       <label>Spec <select id="runSpec"></select></label>
       <button class="btn" id="runBtn">Run</button>
+      <button class="btn ghost" id="planBtn" title="S06 + S05 only: shows the evidence each task gets and which tasks would share a model call. The chat model is not used.">Show the plan (S05)</button>
+      <label>Grouping <select id="planGrouping" title="Preview a grouping setting without saving it"><option value="">as in Settings</option><option value="auto">auto: tasks that share evidence share a call</option><option value="off">off: one call per task</option></select></label>
     </div>
     <div id="runDocs" class="row"></div>
   </div>
@@ -277,7 +279,9 @@ tr.dim td{color:var(--muted)}
     <div id="corpusCases" style="margin-top:8px"></div>
     <div class="row" style="margin-top:10px"><button class="btn" id="corpusParse">Measure parsing quality</button>
       <button class="btn" id="corpusIndex">Measure chunking quality</button>
+      <button class="btn" id="corpusOverlap" title="Retrieval only: how much evidence the tasks of a case share (S05). The chat model is not used.">Measure evidence overlap</button>
       <button class="btn" id="corpusExtract">Measure value extraction</button>
+      <label title="Runs the extraction measure twice on the same evidence: one call per task (off) and tasks that share evidence sharing a call (auto). Lists every task whose result changed."><input type="checkbox" id="corpusCompare"> compare grouping (off vs auto)</label>
       <button class="btn" id="corpusAccept">Measure acceptance</button></div>
     <div id="corpusResult" style="margin-top:12px"></div>
     <div id="corpusHistory" style="margin-top:18px"></div>
@@ -490,6 +494,28 @@ function renderRun(r) {
         <td>${esc(x.diagnostics.join(' · '))}</td></tr>`).join('')}</tbody></table>
       <details style="margin-top:12px"><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
 }
+function renderPlan(r) {
+  const p = r.plan, byId = Object.fromEntries(r.tasks.map(t => [t.id, t]));
+  const total = r.tasks.reduce((n, t) => n + t.tokens, 0), calls = p.batches.length;
+  return `<h2>Plan (S05) · grouping ${esc(r.grouping || 'off')}</h2>
+    <p class="hint">${r.tasks.length} value task(s) would be answered in <b>${calls}</b> extraction call(s) (each task also has its own verification call).
+      When a call is shared, each task still reads only its own evidence and is asked again alone if the shared answer cannot be trusted.
+      Separate calls would read ${total} evidence tokens; ${p.batches.reduce((n, b) => n + b.tokens, 0)} with this plan.</p>
+    <table><thead><tr><th>Call</th><th>Tasks</th><th>Evidence tokens</th><th>Why</th></tr></thead><tbody>${p.batches.map((b, i) => `<tr>
+      <td>${i + 1}</td><td>${b.task_ids.map(t => `<code title="${esc(byId[t] ? byId[t].description : '')}">${esc(t)}</code>`).join(' ')}</td><td>${b.tokens}</td><td><small>${esc(b.reason)}</small></td></tr>`).join('')}</tbody></table>
+    <h2 style="margin-top:14px">Evidence shared between tasks</h2>
+    ${p.overlaps.length ? `<table><thead><tr><th>Task</th><th>Task</th><th>Shared passages</th><th>Shared tokens</th><th>Share of the smaller evidence</th></tr></thead><tbody>${p.overlaps.map(o => `<tr>
+      <td><code>${esc(o.task_a)}</code></td><td><code>${esc(o.task_b)}</code></td><td>${o.shared_passages}</td><td>${o.shared_tokens}</td>
+      <td>${pill(Math.round(o.containment * 100) + '%', o.containment >= 0.8 ? 'ok' : o.containment >= 0.5 ? 'warn' : '')}</td></tr>`).join('')}</tbody></table>` : '<p class="hint">No two tasks share a passage.</p>'}
+    <details style="margin-top:12px"><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+}
+$('#planBtn').onclick = async e => {
+  const docs = [...document.querySelectorAll('#runDocs input:checked')].map(i => i.value);
+  const out = $('#runOut'); out.hidden = false; busy(e.target, true, 'Planning…');
+  try { out.innerHTML = renderPlan(await api('/plan', json('POST', {spec: $('#runSpec').value, documents: docs, grouping: $('#planGrouping').value || null}))); }
+  catch (err) { out.innerHTML = `<div class="msg bad">${esc(err.message)}</div>`; }
+  busy(e.target, false);
+};
 $('#runBtn').onclick = async e => {
   const docs = [...document.querySelectorAll('#runDocs input:checked')].map(i => i.value);
   const out = $('#runOut'); out.hidden = false; busy(e.target, true, 'Running…');
@@ -538,6 +564,13 @@ const EXTRACT_HELP = {
   think_extraction: 'Let the model reason before listing candidates (slower, more accurate)',
   think_verification: 'Let the model reason when verifying candidates', think_choice: 'Let the model reason when applying precedence rules',
 };
+const PLAN_HELP = {
+  grouping: 'off: one extraction call per task. auto: tasks that share most of their evidence share one call (each task still reads only its own evidence)',
+  max_fields_per_call: 'Most tasks answered by one call (a larger model can take more)',
+  max_foreign_share: 'A task may be shown at most this share of passages that its own retrieval did not pick (0-1). Lower = safer, fewer groups',
+  output_tokens_per_field: "Expected size of one task's answer: tasks x this must fit the model's output limit",
+  reask_absent: 'always: a task the shared call found nothing for is asked again alone (protects against false absence). never: trust the shared answer',
+};
 const ACCEPT_HELP = {
   risk_relevance_ratio: 'A damaged region blocks "not found" when its relevance to the task reaches this share of the best evidence (0-1)',
   semantic_check: 'S10: ask the verification model to audit each answer before accepting it', think_semantic: 'Let it reason first (slower)',
@@ -582,6 +615,9 @@ async function loadConfig() {
     sel('cfgExtName', 'extraction model adapter', opts.extraction, cfg.models.extraction.name) +
     `<label>extraction model params (JSON)<input id="cfgExtParams" value="${esc(jsonText(cfg.models.extraction.params))}"><small>e.g. {"model": "qwen3:8b", "context_tokens": 16384} (ollama_chat) or {"base_url": "...", "model": "...", "api_key_env": "..."} (openai_compatible_chat)</small></label>` +
     Object.entries(cfg.extraction).map(([k, v]) => ex(k, v)).join('') +
+    Object.entries(cfg.planning).map(([k, v]) => ['grouping', 'reask_absent'].includes(k)
+      ? `<label>${k}<select data-pl="${k}">${(k === 'grouping' ? ['off', 'auto'] : ['always', 'never']).map(o => `<option ${o === v ? 'selected' : ''}>${o}</option>`).join('')}</select><small>${PLAN_HELP[k]}</small></label>`
+      : `<label>${k}<input data-pl="${k}" type="number" step="any" value="${v}"><small>${PLAN_HELP[k]}</small></label>`).join('') +
     sel('cfgProfile', 'default retrieval profile', Object.keys(opts.retrieval.profiles), cfg.retrieval.profile) +
     sel('cfgLexName', 'lexical store', opts.stores.lexical, cfg.indexing.lexical_store.name) +
     `<label>lexical store params (JSON)<input id="cfgLexParams" value="${esc(jsonText(cfg.indexing.lexical_store.params))}"></label>` +
@@ -615,6 +651,7 @@ $('#cfgSave').onclick = async () => {
     next.acceptance[k] = ['block', 'allow'].includes(k) ? list(v) : k === 'profile' ? v : v === 'true' ? true : v === 'false' ? false : v === '' ? null : Number(v);
   });
   document.querySelectorAll('#idxForm [data-acq]').forEach(el => { next.acceptance.qualification[el.dataset.acq] = Number(el.value); });
+  document.querySelectorAll('#idxForm [data-pl]').forEach(el => { next.planning[el.dataset.pl] = el.tagName === 'SELECT' ? el.value : Number(el.value); });
   document.querySelectorAll('#idxForm [data-ex]').forEach(el => {
     const k = el.dataset.ex, v = el.value;
     next.extraction[k] = v === 'true' ? true : v === 'false' ? false : v === '' ? null : Number(v);
@@ -635,7 +672,7 @@ $('#cfgSave').onclick = async () => {
 $('#cfgReset').onclick = async () => { await api('/config', {method: 'DELETE'}); $('#cfgMsg').innerHTML = '<div class="msg ok">Defaults restored.</div>'; loadConfig(); };
 
 /* ---------- history of runs ---------- */
-const HIST_TAB = {parse: 'docs', index: 'docs', search: 'docs', retrieve: 'retr', extract: 'extr', run: 'run'};
+const HIST_TAB = {parse: 'docs', index: 'docs', search: 'docs', retrieve: 'retr', extract: 'extr', run: 'run', plan: 'run'};
 let histRuns = [], histSel = null;
 function gotoTab(tab) { document.querySelector(`nav button[data-tab="${tab}"]`).click(); }
 async function openHistory(group, kind) {  // jump to the History tab with a filter
@@ -646,7 +683,7 @@ async function loadHistory(presetKind) {
   const sel = $('#histKind');
   if (!sel.options.length) {
     const kinds = {'': 'All runs', parse: 'Parse', index: 'Chunk & index', search: 'Index search', retrieve: 'Retrieve evidence',
-      extract: 'Extract value', run: 'Run spec', 'corpus.': 'All corpus measures', 'corpus.parsing': 'Corpus · parsing',
+      extract: 'Extract value', run: 'Run spec', plan: 'Plan (S05)', 'corpus.': 'All corpus measures', 'corpus.overlap': 'Corpus · evidence overlap', 'corpus.parsing': 'Corpus · parsing',
       'corpus.indexing': 'Corpus · chunking', 'corpus.extraction': 'Corpus · extraction', 'corpus.acceptance': 'Corpus · acceptance'};
     sel.innerHTML = Object.entries(kinds).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join('');
   }
@@ -682,6 +719,7 @@ async function showHistoryRun(id) {
   let body;
   if (rec.status === 'error') body = `<div class="msg bad"><b>The job failed:</b> ${esc(rec.error)}</div>`;
   else if (rec.kind === 'run') body = renderRun(rec.result);
+  else if (rec.kind === 'plan') body = renderPlan(rec.result);
   else if (rec.kind === 'search') body = renderSearch(rec.result);
   else if (rec.kind.startsWith('corpus.')) body = CORPUS_RENDER[rec.kind.split('.')[1]](rec.result);
   else body = `<p><button class="btn" id="histOpen">Open this result in the ${esc({docs: 'Documents', retr: 'Retrieval', extr: 'Extraction'}[HIST_TAB[rec.kind]])} tab</button></p>
@@ -742,7 +780,7 @@ async function loadCorpus() {
     ${s.case_info.map(c => `<label title="${esc(c.tags.join(', '))}"><input type="checkbox" name="case" value="${esc(c.id)}" checked>
       ${esc(c.id)} <small>${esc(c.spec)} · ${esc(c.documents.join(', '))}</small></label>`).join('')}</div></details>`;
   const boxes = () => [...document.querySelectorAll('#corpusCases input[name=case]')];
-  const count = () => $('#corpusCasesCount').textContent = `${boxes().filter(b => b.checked).length} of ${boxes().length} selected (extraction measure only)`;
+  const count = () => $('#corpusCasesCount').textContent = `${boxes().filter(b => b.checked).length} of ${boxes().length} selected (extraction, acceptance and overlap measures)`;
   boxes().forEach(b => b.onchange = count); count();
   $('#corpusCasesAll').onclick = () => { boxes().forEach(b => b.checked = true); count(); };
   $('#corpusCasesNone').onclick = () => { boxes().forEach(b => b.checked = false); count(); };
@@ -771,20 +809,33 @@ const CORPUS_RENDER = {
   },
   extraction(r) {
     const pct = (row, k) => row.tasks ? Math.round(100 * (row.counts[k] || 0) / row.tasks) + '%' : 'n/a';
-    return `<table><thead><tr><th>Profile</th><th>Tasks</th><th>Correct</th><th>Wrong</th><th>…wrong but cited</th><th>Abstained</th>
-      <th>False absence</th><th>False value</th><th>Failed</th><th>Sec/task</th></tr></thead><tbody>${r.rows.map(x => `<tr><td>${esc(x.profile)}</td><td>${x.tasks}</td>
+    return `<table><thead><tr><th>Profile</th><th>Grouping</th><th>Tasks</th><th>Correct</th><th>Wrong</th><th>…wrong but cited</th><th>Abstained</th>
+      <th>False absence</th><th>False value</th><th>Failed</th><th>Sec/task</th><th>Model calls</th><th>…extraction</th><th>Prompt tokens</th></tr></thead><tbody>${r.rows.map(x => `<tr><td>${esc(x.profile)}</td><td>${esc(x.grouping || 'off')}</td><td>${x.tasks}</td>
       <td>${pct(x, 'correct')}</td><td>${pct(x, 'wrong')}</td><td>${pct(x, 'wrong_but_cited')}</td><td>${pct(x, 'abstained')}</td><td>${pct(x, 'false_absence')}</td>
-      <td>${pct(x, 'false_value')}</td><td>${pct(x, 'failed')}</td><td>${x.mean_seconds.toFixed(1)}</td></tr>`).join('')}</tbody></table>
-      <p class="hint">False absence (the engine says it is not there, but it is) and false value (it invents one) are the errors that matter most.</p>
+      <td>${pct(x, 'false_value')}</td><td>${pct(x, 'failed')}</td><td>${x.mean_seconds.toFixed(1)}</td><td>${x.model_calls ?? ''}</td><td>${x.extraction_calls ?? ''}</td><td>${x.prompt_tokens || ''}</td></tr>`).join('')}</tbody></table>
+      <p class="hint">False absence (the engine says it is not there, but it is) and false value (it invents one) are the errors that matter most.
+        Grouping: <b>off</b> = one extraction call per task, <b>auto</b> = tasks that share evidence share a call (a shared call counts once). Prompt tokens are those the model server reports (a server that reuses a cached prefix reports fewer).</p>
+      ${r.rows.length > 1 ? (r.differences && r.differences.length ? `<h2 style="margin-top:14px">Tasks whose result changed between groupings (${r.differences.length})</h2>
+        <table><thead><tr><th>Business id</th><th>Field id</th><th>Description</th>${r.rows.map(x => `<th>${esc(x.grouping)}</th>`).join('')}</tr></thead><tbody>${r.differences.map(d => `<tr>
+          <td>${esc(d.case_id)}</td><td><code>${esc(d.task_id)}</code></td><td><small>${esc(d.description)}</small></td>
+          ${r.rows.map(x => { const a = d.arms[x.grouping]; return a ? `<td>${pill(a.outcome.replace(/_/g, ' '), ['correct', 'correct_absence', 'correct_uncertain'].includes(a.outcome) ? 'ok' : 'bad')} ${esc(typeof a.got === 'string' ? a.got : JSON.stringify(a.got))}
+            ${a.shared_with && a.shared_with.length ? `<br><small class="hint">call shared with ${esc(a.shared_with.join(', '))}</small>` : ''}</td>` : '<td></td>'; }).join('')}</tr>`).join('')}</tbody></table>`
+        : '<div class="msg ok">No task changed its result between the groupings.</div>') : ''}
       ${r.misses.length ? `<h2 style="margin-top:14px">Misses (${r.misses.length})</h2><table><thead><tr><th>Business id</th><th>Field id</th>
         <th>Description</th><th>Expected value</th><th>Extracted value</th><th>Error type</th></tr></thead><tbody>${r.misses.map(o => {
           const val = v => typeof v === 'string' ? v : JSON.stringify(v);
           const desc = o.description || '';
-          return `<tr><td>${esc(o.case_id)}${r.rows.length > 1 ? `<br><small>${esc(o.profile)}</small>` : ''}</td><td><code>${esc(o.task_id)}</code></td>
+          return `<tr><td>${esc(o.case_id)}${r.rows.length > 1 ? `<br><small>${esc(o.profile + ' / ' + (o.grouping || 'off'))}</small>` : ''}</td><td><code>${esc(o.task_id)}</code></td>
           <td><small title="${esc(desc)}" style="display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(desc)}</small></td>
           <td>${esc(val(o.expected))}</td><td>${esc(val(o.got))}${o.reason ? `<br><small class="hint" title="${esc(o.reason)}">${esc(o.reason)}</small>` : ''}</td>
           <td>${pill(o.outcome.replace(/_/g, ' '), o.outcome === 'abstained' ? 'warn' : 'bad')}</td></tr>`; }).join('')}</tbody></table>` : ''}`;
   },
+};
+CORPUS_RENDER.overlap = r => {
+  const pct = v => Math.round(v * 100) + '%';
+  return `<table><thead><tr><th>Business id</th><th>Tasks</th><th>Evidence tokens</th><th>Distinct tokens</th><th>Shareable</th><th>Pairs sharing</th><th>…≥ 80% inside</th><th>…≥ 50% inside</th></tr></thead><tbody>${r.rows.map(x => `<tr>
+    <td>${esc(x.case_id)}</td><td>${x.tasks}</td><td>${x.tokens}</td><td>${x.distinct_tokens}</td><td>${pct(x.shareable)}</td><td>${x.pairs}</td><td>${x.pairs_80}</td><td>${x.pairs_50}</td></tr>`).join('')}</tbody></table>
+    <p class="hint">Shareable = how many evidence tokens one call per case could save compared with one call per task. A pair is "≥ 80% inside" when the smaller evidence is almost entirely contained in the other: the easiest tasks to answer together.</p>`;
 };
 CORPUS_RENDER.acceptance = r => {
   const pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
@@ -837,6 +888,10 @@ async function runCorpusMeasure(e, measure, label, body) {
 }
 $('#corpusParse').onclick = e => runCorpusMeasure(e, 'parsing', 'Measuring…');
 $('#corpusIndex').onclick = e => runCorpusMeasure(e, 'indexing', 'Measuring…');
+$('#corpusOverlap').onclick = e => {
+  const cases = [...document.querySelectorAll('#corpusCases input[name=case]:checked')].map(x => x.value);
+  runCorpusMeasure(e, 'overlap', 'Measuring (retrieval only)…', {cases});
+};
 $('#corpusAccept').onclick = e => {
   const kinds = [...document.querySelectorAll('#corpusFilters input[name=kind]:checked')].map(x => x.value);
   const cases = [...document.querySelectorAll('#corpusCases input[name=case]:checked')].map(x => x.value);
@@ -853,7 +908,8 @@ $('#corpusExtract').onclick = e => {
     $('#corpusResult').innerHTML = '<div class="msg bad">select at least one extraction project to test</div>'; return;
   }
   const tags = $('#corpusSplit') && $('#corpusSplit').value ? [$('#corpusSplit').value] : [];
-  runCorpusMeasure(e, 'extraction', 'Measuring (runs the model on every value task)…', {kinds, tags, cases});
+  const groupings = $('#corpusCompare').checked ? ['off', 'auto'] : [];
+  runCorpusMeasure(e, 'extraction', 'Measuring (runs the model on every value task' + (groupings.length ? ', twice: one call per task and shared calls' : '') + ')…', {kinds, tags, cases, groupings});
 };
 
 /* ---------- retrieval (S06) ---------- */
@@ -1075,7 +1131,7 @@ function showProposal(r) {
 }
 
 /* ---------- logs (engine events, polled) ---------- */
-const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S06: 'retrieve', S07: 'extract', S10: 'validate', S11: 'accept', S13: 'result', eval: 'evaluate', ui: 'queue'};
+const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S05: 'plan', S06: 'retrieve', S07: 'extract', S10: 'validate', S11: 'accept', S13: 'result', eval: 'evaluate', ui: 'queue'};
 const RUNS = new Map();   // run id -> {id,title,start,end,failed,events:[],progress:{},open:{},stages:{}}
 let logSeq = 0, lastRunId = null;
 const openRuns = new Set();

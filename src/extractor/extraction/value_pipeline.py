@@ -1,8 +1,11 @@
 """S07 - THE VALUE EXTRACTION PIPELINE, start to finish, in one place.
 
-Read `extract_value` top to bottom: each numbered step is one call, and each
-call lives in its own small module (named in the comment). To change how a
-value is extracted, edit a step here or the helper it points to.
+Read `extract_value` and the two functions it calls, top to bottom: each numbered
+step is one call, and each call lives in its own small module (named in the
+comment). To change how a value is extracted, edit a step here or the helper it
+points to.
+
+    extract_value = ask_task (steps 1-4: what the model SAYS) + conclude_task (steps 5-10: what the engine DECIDES)
 
     value task + evidence package
         |  1. tag         prompts.py     passages get short tags P1, P2... the model can copy
@@ -23,10 +26,10 @@ The model only reports what the text says. It never decides alone, and a
 technical failure or missing evidence is never turned into "not found".
 """
 
-import json
+from dataclasses import dataclass, field
 
 from ..adapters.base import ExtractorAdapter
-from ..config.runtime import ExtractionSettings
+from ..config.runtime import ExtractionSettings, PlanningSettings
 from ..contracts.candidate import Candidate, ModelCall, ProposalOutcome, ValueProposal
 from ..contracts.coverage import CoverageEntry, CoverageLedger, CoverageState
 from ..contracts.evidence import EvidencePackage
@@ -35,11 +38,13 @@ from ..contracts.task import Cardinality, OutputType, TaskSpecification
 from ..contracts.common import TaskKind
 from ..events import emit
 from .calling import call_model
+from .capacity import evidence_budget, passage_cost
 from .choosing import choose_between
 from .derivation import derive_candidates
+from .grouped import field_answer, keep_own_evidence
 from .normalize import infer_date_order, normalize_candidate
 from .partition import split_evidence
-from .prompts import extraction_prompt, passage_tags, render_passage
+from .prompts import extraction_prompt, group_extraction_prompt, passage_tags
 from .reading import Reading, read_reply
 from .reconcile import Group, group_candidates
 from .screening import screen
@@ -52,6 +57,23 @@ class ExtractionError(ValueError):
     """The task cannot be served by value extraction."""
 
 
+@dataclass
+class Asked:
+    """What steps 1-4 produced for ONE task: the model's answers, read, and everything that went wrong on the way.
+
+    Steps 5-10 (`conclude_task`) start from this, so they never need to know how the model was asked
+    (alone, or together with other tasks that share the evidence).
+    """
+
+    task: TaskSpecification
+    package: EvidencePackage
+    calls: list[ModelCall] = field(default_factory=list)
+    readings: list[Reading] = field(default_factory=list)
+    gaps: list[str] = field(default_factory=list)  # retrieval gaps + passages too big for a call + calls that failed
+    log: list[str] = field(default_factory=list)
+    shared_with: list[str] = field(default_factory=list)  # the other tasks whose answer came from the same model call
+
+
 def extract_value(
     task: TaskSpecification,
     package: EvidencePackage,
@@ -61,56 +83,156 @@ def extract_value(
     *,
     ledger: CoverageLedger | None = None,
 ) -> ValueProposal:
+    """One value task, alone: ask the model (steps 1-4), then conclude (steps 5-10)."""
     settings = settings or ExtractionSettings()
+    asked = ask_task(task, package, documents, extractor, settings, ledger=ledger)
+    return conclude_task(asked, extractor, settings)
+
+
+def ask_task(
+    task: TaskSpecification,
+    package: EvidencePackage,
+    documents: list[IndexedDocument],
+    extractor: ExtractorAdapter,
+    settings: ExtractionSettings,
+    *,
+    ledger: CoverageLedger | None = None,
+) -> Asked:
+    """Steps 1-4: tag the passages, split them by context, ask the model, read its answers."""
     if task.kind != TaskKind.VALUE:
         raise ExtractionError(f"task '{task.id}' is a {task.kind.value} task: value extraction only serves value tasks")
-    proposal = ValueProposal(task_id=task.id, outcome=ProposalOutcome.UNCERTAIN, gaps=list(package.gaps))
-    log: list[str] = []
-    passages = {p.passage_id: p for d in documents for p in d.passages}  # full passages, to locate quotes
+    asked = Asked(task=task, package=package, gaps=list(package.gaps))
     if not package.passages:
-        # retrieval returns passages whenever any exist, so an empty package means nothing was parsed or indexed
-        return proposal.model_copy(update={"outcome": ProposalOutcome.FAILED, "steps": log,
-                                           "reason": "no indexed passages to read (nothing was parsed or indexed for this task)"})
+        return asked  # `conclude_task` reports it: nothing was parsed or indexed for this task
+    passages = {p.passage_id: p for d in documents for p in d.passages}  # full passages, to locate quotes
 
     # 1. Tag the passages: the model cites "P3", the engine maps it back to the real passage.
     tagged = passage_tags(package.passages)
     show_document = len({p.document_id for p in package.passages}) > 1
 
     # 2. Split the evidence into as many calls as the model's context needs.
-    overhead = _prompt_cost(task, tagged, settings, extractor, show_document)
-    budget = int(extractor.context_tokens * (1 - settings.prompt_margin)) - extractor.output_tokens - overhead
-    parts, oversize = split_evidence(
-        list(tagged.values()), max(budget, 1),
-        lambda p: extractor.count_tokens(render_passage("P00", p, show_document)))
-    proposal.gaps.extend(oversize)
+    budget = evidence_budget([task], settings, extractor, show_document)
+    parts, oversize = split_evidence(list(tagged.values()), max(budget, 1), passage_cost(extractor, show_document))
+    asked.gaps.extend(oversize)
     if settings.passages_per_call:  # focus: fewer passages per call, each call reconciled afterwards
         n = settings.passages_per_call
         parts = [part[i:i + n] for part in parts for i in range(0, len(part), n)]
-    log.append(f"evidence: {len(package.passages)} passage(s) in {len(parts)} call(s) "
-               f"(~{budget} evidence tokens per call; context {extractor.context_tokens})")
+    asked.log.append(f"evidence: {len(package.passages)} passage(s) in {len(parts)} call(s) "
+                     f"(~{budget} evidence tokens per call; context {extractor.context_tokens})")
     emit("S07", f"{task.id}: {len(package.passages)} passage(s) go to the model in {len(parts)} call(s)")
 
     # 3. Ask the model, once per part.
     part_tags = [{tag: p for tag, p in tagged.items() if p in part} for part in parts]
-    calls: list[ModelCall] = []
     for number, tags in enumerate(part_tags, start=1):
         prompt = extraction_prompt(task, tags, settings.max_candidates, show_document)
-        calls.append(call_model(extractor, prompt, f"extract {number}/{len(parts)}", settings.retries, settings.think_extraction))
+        asked.calls.append(call_model(extractor, prompt, f"extract {number}/{len(parts)}", settings.retries, settings.think_extraction))
 
     # 4. Read the answers: candidates with their quotes located in the evidence.
-    readings: list[Reading] = []
-    for number, (part, call) in enumerate(zip(parts, calls), start=1):
+    for number, (part, call) in enumerate(zip(parts, asked.calls), start=1):
         if call.reply.data is None:
-            proposal.gaps.append(f"call {number}/{len(parts)} failed, its {len(part)} passage(s) were not read: {call.reply.error}")
+            asked.gaps.append(f"call {number}/{len(parts)} failed, its {len(part)} passage(s) were not read: {call.reply.error}")
             continue
-        readings.append(read_reply(call.reply.data, number, part_tags[number - 1], passages, task.output.type))
+        asked.readings.append(read_reply(call.reply.data, number, part_tags[number - 1], passages, task.output.type))
         _mark_inspected(ledger, task.id, part)
-    candidates = [c for r in readings for c in r.candidates]
-    log += [note for r in readings for note in r.notes]
-    log.append(f"model reported {len(candidates)} candidate(s)" +
-               (f"; {len(calls) - len(readings)} call(s) failed" if len(readings) < len(calls) else ""))
+    candidates = [c for r in asked.readings for c in r.candidates]
+    asked.log += [note for r in asked.readings for note in r.notes]
+    asked.log.append(f"model reported {len(candidates)} candidate(s)" +
+                     (f"; {len(asked.calls) - len(asked.readings)} call(s) failed" if len(asked.readings) < len(asked.calls) else ""))
     emit("S07", f"{task.id}: the model reported {len(candidates)} candidate(s)",
-         "warn" if len(readings) < len(calls) else "info")
+         "warn" if len(asked.readings) < len(asked.calls) else "info")
+    return asked
+
+
+def ask_batch(
+    tasks: list[TaskSpecification],
+    packages: dict[str, EvidencePackage],
+    documents: list[IndexedDocument],
+    extractor: ExtractorAdapter,
+    settings: ExtractionSettings,
+    planning: PlanningSettings,
+    *,
+    ledger: CoverageLedger | None = None,
+) -> dict[str, Asked]:
+    """Steps 1-4 for the tasks of ONE batch of the plan (a batch of one task is `ask_task`, exactly as before).
+
+    Several tasks share one model call: the union of their evidence is shown once and the model answers every field.
+    Each task then keeps only what it found in ITS OWN evidence and goes on alone (`conclude_task`). Whenever the shared
+    call cannot be trusted for a task (the call failed, the field is missing from the answer, nothing was found, the
+    model took a value from another task's passage) THAT task is asked again alone, so grouping never costs an answer.
+    """
+    if len(tasks) == 1:
+        task = tasks[0]
+        return {task.id: ask_task(task, packages[task.id], documents, extractor, settings, ledger=ledger)}
+    ids = [t.id for t in tasks]
+    alone = lambda task, why, call=None: _ask_alone(task, packages, documents, extractor, settings, ledger, why, call)  # noqa: E731
+    passages = {p.passage_id: p for d in documents for p in d.passages}  # full passages, to locate quotes
+
+    # 1. Tag the UNION of the evidence once, in document order.
+    position = {pid: i for i, pid in enumerate(passages)}
+    union = sorted({p.passage_id: p for t in tasks for p in packages[t.id].passages}.values(), key=lambda p: position.get(p.passage_id, len(position)))
+    tagged = passage_tags(union)
+    show_document = len({p.document_id for p in union}) > 1
+
+    # 2. The union must fit in ONE call; the plan checked it, this is the safety net.
+    budget = evidence_budget(tasks, settings, extractor, show_document)
+    parts, _ = split_evidence(list(tagged.values()), max(budget, 1), passage_cost(extractor, show_document))
+    if len(parts) != 1:
+        emit("S07", f"{', '.join(ids)}: the shared evidence does not fit one call; asking each task alone", "warn")
+        return {t.id: alone(t, "the shared evidence did not fit one call") for t in tasks}
+    log = f"evidence: {len(union)} passage(s) shown once for {len(tasks)} tasks (~{budget} evidence tokens per call; context {extractor.context_tokens})"
+    emit("S07", f"{', '.join(ids)}: {len(union)} passage(s) go to the model in 1 call for {len(tasks)} tasks")
+
+    # 3. Ask the model ONCE for all of them.
+    call = call_model(extractor, group_extraction_prompt(tasks, tagged, settings.max_candidates, show_document),
+                      f"extract {len(tasks)} fields together ({', '.join(ids)})", settings.retries, settings.think_extraction)
+    if call.reply.data is None:
+        emit("S07", f"{', '.join(ids)}: the shared call failed; asking each task alone", "warn")
+        return {t.id: alone(t, f"the shared call failed ({call.reply.error})", call) for t in tasks}
+
+    # 4. Read each task's part of the answer: only candidates from its own evidence count.
+    result: dict[str, Asked] = {}
+    for task in tasks:
+        own_ids = {p.passage_id for p in packages[task.id].passages}
+        own = {tag: p for tag, p in tagged.items() if p.passage_id in own_ids}
+        answer = field_answer(call.reply.data, task.id)
+        if answer is None:
+            result[task.id] = alone(task, "the model left this field out of the shared answer", call)
+            continue
+        answer, foreign = keep_own_evidence(answer, own, tagged)
+        reading = read_reply(answer, 1, own, passages, task.output.type)
+        if not reading.candidates and (foreign or planning.reask_absent == "always"):
+            result[task.id] = alone(task, "the shared call took its values from other tasks' passages" if foreign
+                                    else "the shared call found no value (reask_absent: always)", call)
+            continue
+        found = Asked(task=task, package=packages[task.id], calls=[call], readings=[reading], gaps=list(packages[task.id].gaps), shared_with=[i for i in ids if i != task.id],
+                      log=[log, f"{len(own)} of the {len(tagged)} shown passage(s) were retrieved for this task; the call answered "
+                                f"{len(tasks)} tasks: {', '.join(ids)}", *foreign, *reading.notes,
+                           f"model reported {len(reading.candidates)} candidate(s)"])
+        _mark_inspected(ledger, task.id, packages[task.id].passages)
+        emit("S07", f"{task.id}: the model reported {len(reading.candidates)} candidate(s)")
+        result[task.id] = found
+    return result
+
+
+def _ask_alone(task, packages, documents, extractor, settings, ledger, why: str, call: ModelCall | None = None) -> Asked:
+    """The ordinary one-task path, used whenever a shared call cannot be trusted for this task (and says why)."""
+    emit("S07", f"{task.id}: asking alone: {why}", "warn")
+    alone = ask_task(task, packages[task.id], documents, extractor, settings, ledger=ledger)
+    alone.log.insert(0, f"asked alone instead of in a shared call: {why}")
+    if call is not None:
+        alone.calls.insert(0, call)  # the shared call stays visible
+    return alone
+
+
+def conclude_task(asked: Asked, extractor: ExtractorAdapter, settings: ExtractionSettings) -> ValueProposal:
+    """Steps 5-10: from what the model said to one proposal. Every task goes through these on its own."""
+    task, package, readings, calls, log = asked.task, asked.package, asked.readings, list(asked.calls), list(asked.log)
+    proposal = ValueProposal(task_id=task.id, outcome=ProposalOutcome.UNCERTAIN, gaps=list(asked.gaps))
+    if not package.passages:
+        # retrieval returns passages whenever any exist, so an empty package means nothing was parsed or indexed
+        return proposal.model_copy(update={"outcome": ProposalOutcome.FAILED, "steps": log,
+                                           "reason": "no indexed passages to read (nothing was parsed or indexed for this task)"})
+    candidates = [c for r in readings for c in r.candidates]
 
     # 5. Normalize each value by code (the literal text is always kept).
     date_order = infer_date_order(" ".join(p.text for p in package.passages)) if task.output.type == OutputType.DATE else None
@@ -261,12 +383,6 @@ def _drop_unlocated(candidates: list[Candidate], settings: ExtractionSettings, l
         return ok
     log.append("no candidate has a quote found in the evidence: keeping them, flagged")
     return candidates
-
-
-def _prompt_cost(task, tagged, settings, extractor, show_document) -> int:
-    """Tokens of everything in a call except the passages (instructions, task, schema)."""
-    prompt = extraction_prompt(task, {}, settings.max_candidates, show_document)
-    return extractor.count_tokens(prompt.system + prompt.user + json.dumps(prompt.json_schema))
 
 
 def _mark_inspected(ledger: CoverageLedger | None, task_id: str, part) -> None:

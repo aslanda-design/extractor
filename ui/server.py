@@ -40,6 +40,13 @@ class CorpusExtractBody(BaseModel):
     tags: list[str] = []  # only cases having all these tags (e.g. split:test)
     cases: list[str] = []  # only these case ids (empty = all)
     qualify: bool = False  # acceptance only: write a qualification record when the thresholds are met
+    groupings: list[str] = []  # extraction only: S05 grouping settings to compare (e.g. ["off", "auto"]; empty = the one in Settings)
+
+
+class PlanBody(BaseModel):
+    spec: str
+    documents: list[str]
+    grouping: str | None = None  # preview "off" or "auto" without saving it (empty = the Settings value)
 
 
 class ExtractBody(BaseModel):
@@ -140,6 +147,11 @@ def create_app(workspace_dir: Path) -> FastAPI:
     def extract(body: ExtractBody):  # sync: retrieval + one or more model calls
         return ws.extract(body.documents, body.task, body.profile, body.overrides)
 
+    # --- plan (S05) ---
+    @app.post("/api/plan")
+    def plan(body: PlanBody):  # sync: retrieval only, no chat model
+        return ws.plan(body.spec, body.documents, body.grouping)
+
     # --- run ---
     @app.post("/api/run")
     def run(body: RunBody):
@@ -189,9 +201,13 @@ def create_app(workspace_dir: Path) -> FastAPI:
     def corpus_indexing():
         return ws.corpus_indexing()
 
+    @app.post("/api/corpus/overlap")
+    def corpus_overlap(body: CorpusExtractBody):
+        return ws.corpus_overlap(body.cases)
+
     @app.post("/api/corpus/extraction")
     def corpus_extraction(body: CorpusExtractBody):
-        return ws.corpus_extraction(body.kinds, body.tags, body.cases)
+        return ws.corpus_extraction(body.kinds, body.tags, body.cases, body.groupings)
 
     @app.post("/api/corpus/acceptance")
     def corpus_acceptance(body: CorpusExtractBody):

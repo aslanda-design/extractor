@@ -47,3 +47,14 @@ def choice_schema() -> dict:
     return {"type": "object",
             "properties": {"choice": {"type": "integer"}, "reason": {"type": "string"}},
             "required": ["choice", "reason"]}
+
+
+def group_schema(tasks: list[TaskSpecification], tags: list[str], max_candidates: int) -> dict:
+    """One answer for SEVERAL tasks: `fields` has one required entry per task id, each with the single-task answer shape.
+
+    An object with one property per task (not an array) so the answer cannot skip, repeat or reorder a field, and
+    every task keeps its own `value` enum when it is a label task. Derivation is never offered in a group."""
+    per_task = {task.id: extraction_schema(task, tags, False, max_candidates) for task in tasks}
+    return {"type": "object",
+            "properties": {"fields": {"type": "object", "properties": per_task, "required": list(per_task)}},
+            "required": ["fields"]}

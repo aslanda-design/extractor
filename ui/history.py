@@ -17,6 +17,8 @@ KINDS = {
     "retrieve": "Retrieve evidence",
     "extract": "Extract value",
     "run": "Run spec",
+    "plan": "Plan (S05)",
+    "corpus.overlap": "Corpus · evidence overlap",
     "corpus.parsing": "Corpus · parsing",
     "corpus.indexing": "Corpus · chunking",
     "corpus.extraction": "Corpus · extraction",
@@ -43,13 +45,18 @@ def subject(kind: str, params: dict) -> str:
         return f"“{_short(params.get('text'), 60)}” · {', '.join(params.get('documents') or [])}"
     if kind == "extract":
         return f"“{_short((params.get('form') or {}).get('text'), 60)}” · {', '.join(params.get('documents') or [])}"
-    if kind == "run":
+    if kind in ("run", "plan"):
         return f"{params.get('spec_name', '')} · {', '.join(params.get('documents') or [])}"
+    if kind == "corpus.overlap":
+        cases = params.get("cases") or []
+        return f"{len(cases) if cases else 'all'} project(s)"
     if kind in ("corpus.extraction", "corpus.acceptance"):
         cases = params.get("cases") or []
         kinds = params.get("kinds") or ["value"]
         tags = params.get("tags") or []
-        return f"{len(cases) if cases else 'all'} project(s) · {'+'.join(kinds)}" + (f" · {'+'.join(tags)}" if tags else "")
+        groupings = params.get("groupings") or []
+        return (f"{len(cases) if cases else 'all'} project(s) · {'+'.join(kinds)}" + (f" · {'+'.join(tags)}" if tags else "")
+                + (f" · grouping {' vs '.join(groupings)}" if groupings else ""))
     return "all cases" if kind.startswith("corpus.") else ""
 
 
@@ -77,6 +84,13 @@ def headline(kind: str, result: dict | None) -> str:
             for x in r["results"]:
                 counts[x["status"]] = counts.get(x["status"], 0) + 1
             return ", ".join(f"{n} {s}" for s, n in counts.items()) or "no tasks"
+        if kind == "plan":
+            tasks, calls = len(r["tasks"]), len(r["plan"]["batches"])
+            return f"{tasks} task(s) in {calls} call(s), {len(r['plan']['overlaps'])} pair(s) share evidence"
+        if kind == "corpus.overlap":
+            rows = r["rows"]
+            tokens, distinct = sum(x["tokens"] for x in rows), sum(x["distinct_tokens"] for x in rows)
+            return f"{len(rows)} case(s): {_pct(1 - distinct / tokens) if tokens else 'n/a'} of the evidence tokens are shared between tasks"
         if kind == "corpus.parsing":
             return f"quote recall {_pct(r['quote_recall'])}, right page {_pct(r['page_accuracy'])}"
         if kind == "corpus.indexing":
@@ -92,7 +106,11 @@ def headline(kind: str, result: dict | None) -> str:
             if not row:
                 return "no tasks"
             share = lambda k: _pct(row["counts"].get(k, 0) / row["tasks"]) if row["tasks"] else "n/a"
-            return f"{row['tasks']} tasks: correct {share('correct')}, false absence {share('false_absence')}, false value {share('false_value')}"
+            text = f"{row['tasks']} tasks: correct {share('correct')}, false absence {share('false_absence')}, false value {share('false_value')}"
+            if len(r["rows"]) > 1:  # an A/B run: say how the groupings compare
+                text += " · " + " vs ".join(f"{x['grouping']}: {_pct(x['counts'].get('correct', 0) / x['tasks']) if x['tasks'] else 'n/a'} correct, {x['extraction_calls']} extraction calls" for x in r["rows"])
+                text += f" · {len(r.get('differences') or [])} task(s) changed"
+            return text
     except (KeyError, TypeError, IndexError):
         pass
     return ""

@@ -38,13 +38,14 @@ from extractor.evaluation import CorpusError, load_corpus
 from extractor.evaluation.acceptance_eval import evaluate_acceptance
 from extractor.evaluation.extraction_eval import IMPLEMENTED_KINDS, evaluate_extraction
 from extractor.evaluation.indexing_eval import evaluate_indexing
+from extractor.evaluation.overlap_eval import evaluate_overlap
 from extractor.evaluation.parsing_eval import evaluate_parsing
 from extractor.indexing.builder import IndexBuilder
 from extractor.indexing.report import write_index_report
 from extractor.indexing.stores import registered_stores
 from extractor.parsing.backends.pdfium_renderer import PdfiumRenderer
 from extractor.parsing.report import write_report
-from extractor.pipeline import index_documents, run_pipeline
+from extractor.pipeline import index_documents, plan_only, run_pipeline
 from extractor.retrieval.retrieval_pipeline import gather_evidence
 from extractor.retrieval.types import RetrievalRequest, RetrievalTools, request_from_field, request_from_task
 from extractor.scope import DocumentRequest, ManifestError, build_manifest
@@ -572,6 +573,37 @@ class Workspace:
             "results": [r.model_dump(mode="json") for r in results],
         }
 
+    @recorded("plan")
+    def plan(self, spec_name: str, documents: list[str], grouping: str | None = None) -> dict:
+        """S06 + S05 for a spec without asking the chat model: the evidence each task gets and how the tasks would be batched.
+
+        `grouping` ("off" / "auto") previews a setting without saving it; empty = the one in Settings."""
+        if not documents:
+            raise UiError("select at least one document")
+        if grouping not in (None, "", "off", "auto"):
+            raise UiError("grouping must be off or auto")
+        paths = [self.document_path(d) for d in documents]
+        checked = self.validate_spec(self.get_spec(spec_name))
+        if not checked["ok"]:
+            raise UiError("the spec has errors; fix them in the Specification tab first")
+        spec = compile_specification(parse_specification(yaml.safe_load(self.get_spec(spec_name))))
+        config = self.get_config()
+        if grouping:
+            config = config.model_copy(update={"planning": config.planning.model_copy(update={"grouping": grouping})})
+        try:
+            manifest = build_manifest(DocumentRequest.from_paths(paths), self.store)
+        except ManifestError as exc:
+            raise UiError(str(exc)) from None
+        with self._job(f"Plan {spec_name} on {len(documents)} document(s)"):
+            adapters = build_adapters(config, self.store)
+            indexed = index_documents(manifest, adapters, config, self.store)  # S03 + S04 (cached)
+            ctx = plan_only(spec, manifest, adapters, config, indexed, self.store)
+        if ctx.plan is None:
+            raise UiError("the spec has no value tasks to plan")
+        return {"grouping": config.planning.grouping, "plan": ctx.plan.model_dump(mode="json"),
+                "tasks": [{"id": t, "description": spec.task(t).description, "passages": len(ctx.evidence[t].passages),
+                           "tokens": sum(p.token_count for p in ctx.evidence[t].passages)} for t in ctx.plan.task_order()]}
+
     # --- evaluation corpus --------------------------------------------------------
 
     def corpus_status(self) -> dict:
@@ -602,9 +634,24 @@ class Workspace:
             metrics = evaluate_indexing(corpus, builder)
         return {"metrics": metrics.model_dump(mode="json"), "containment": metrics.containment}
 
+    @recorded("corpus.overlap")
+    def corpus_overlap(self, cases: list[str] | None = None) -> dict:
+        """How much evidence the value tasks of each case share (retrieval only; the chat model is not used)."""
+        corpus = load_corpus(CORPUS_DIR)
+        if not corpus.cases:
+            raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
+        config = self.get_config()
+        with self._job("Measure evidence overlap"):
+            _, adapters = self._builder(config)
+            try:
+                report = evaluate_overlap(corpus, config, adapters, self.store, [config.retrieval.profile], cases or None)
+            except ValueError as exc:
+                raise UiError(str(exc))
+        return {"rows": [r.model_dump(mode="json") for r in report.rows]}
+
     @recorded("corpus.extraction")
     def corpus_extraction(self, kinds: list[str] | None = None, tags: list[str] | None = None,
-                          cases: list[str] | None = None) -> dict:
+                          cases: list[str] | None = None, groupings: list[str] | None = None) -> dict:
         corpus = load_corpus(CORPUS_DIR)
         if not corpus.cases:
             raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
@@ -613,12 +660,13 @@ class Workspace:
             _, adapters = self._builder(config)
             try:
                 report = evaluate_extraction(corpus, config, adapters, self.store, [config.retrieval.profile],
-                                             [TaskKind(k) for k in kinds or []] or None, tags or None, cases or None)
+                                             [TaskKind(k) for k in kinds or []] or None, tags or None, cases or None, groupings or None)
             except ValueError as exc:
                 raise UiError(str(exc))
         return {"rows": [r.model_dump(mode="json") for r in report.rows],
                 "misses": [o.model_dump(mode="json") for o in report.outcomes
-                           if o.outcome not in ("correct", "correct_absence", "correct_uncertain")]}
+                           if o.outcome not in ("correct", "correct_absence", "correct_uncertain")],
+                "differences": report.differences()}
 
     @recorded("corpus.acceptance")
     def corpus_acceptance(self, kinds: list[str] | None = None, tags: list[str] | None = None,

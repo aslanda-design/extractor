@@ -7,7 +7,7 @@ depends on which model answers.
 from ..contracts.evidence import EvidenceOrigin, EvidencePassage
 from ..contracts.generation import ModelPrompt
 from ..contracts.task import OutputType, TaskSpecification
-from .schema import choice_schema, extraction_schema, verify_schema
+from .schema import choice_schema, extraction_schema, group_schema, verify_schema
 
 EXTRACTION_SYSTEM = """You extract values from source passages for a document-analysis engine.
 
@@ -39,6 +39,8 @@ Examples (invented text, to show the form of the answer):
 of the State of Ohio." -> value "Ohio", quote "governed by the laws of the State of Ohio".
   Question "Notice period in days." Passage "...upon ninety (90) days' prior written notice..." -> value "ninety (90)", \
 quote "upon ninety (90) days' prior written notice"."""
+
+PASSAGES_HEADER = "PASSAGES:"
 
 DERIVATION_RULES = """
 
@@ -75,8 +77,9 @@ def render_passage(tag: str, passage: EvidencePassage, show_document: bool) -> s
     return f"[{tag}] ({' · '.join(where)})\n{passage.text}"
 
 
-def task_section(task: TaskSpecification) -> str:
-    lines = [f"QUESTION: {task.description}"]
+def task_section(task: TaskSpecification, field: str | None = None) -> str:
+    """The question about one task. `field` (the task id) names it when several questions share a call."""
+    lines = [f"QUESTION ({field}): {task.description}" if field else f"QUESTION: {task.description}"]
     if task.scope.entity:
         lines.append(f"About: {task.scope.entity}")
     if task.scope.time:
@@ -101,9 +104,32 @@ def extraction_prompt(
     if task.rules.derivation:
         system += DERIVATION_RULES.format(rule=task.rules.derivation)
     evidence = "\n\n".join(render_passage(tag, p, show_document) for tag, p in tagged.items())
+    # Passages first, question last: two tasks that read the same passages share the whole start of the prompt, so a
+    # model server that reuses the processed prefix (Ollama, vLLM) reads the passages once; and the question is the
+    # last thing the model sees before it answers.
     return ModelPrompt(
-        system=system, user=f"{task_section(task)}\n\nPASSAGES:\n\n{evidence}", schema_name="extraction",
+        system=system, user=f"{PASSAGES_HEADER}\n\n{evidence}\n\n{task_section(task)}", schema_name="extraction",
         json_schema=extraction_schema(task, list(tagged), bool(task.rules.derivation), max_candidates))
+
+
+GROUP_RULES = """
+
+Several questions ("fields") are asked about the SAME passages. Answer each one on its own, under its field name:
+- Every rule above applies to each field separately. A passage can answer one field and say nothing about another: \
+never report a value for a field because it answers a different field.
+- Report an entry for EVERY field, even when no passage states its value (then "candidates" is empty and "absent_reason" says why).
+- Do not copy a value from one field's answer into another."""
+
+
+def group_extraction_prompt(
+    tasks: list[TaskSpecification], tagged: dict[str, EvidencePassage], max_candidates: int, show_document: bool
+) -> ModelPrompt:
+    """One prompt that answers several tasks that read the same passages (derivation is never allowed in a group)."""
+    evidence = "\n\n".join(render_passage(tag, p, show_document) for tag, p in tagged.items())
+    questions = "\n\n".join(task_section(task, field=task.id) for task in tasks)
+    return ModelPrompt(
+        system=EXTRACTION_SYSTEM + GROUP_RULES, user=f"{PASSAGES_HEADER}\n\n{evidence}\n\n{questions}", schema_name="extraction_group",
+        json_schema=group_schema(tasks, list(tagged), max_candidates))
 
 
 VERIFY_SYSTEM = """You check values that were extracted from a contract. For each candidate decide whether its quote really \

@@ -14,7 +14,10 @@ acceptance yet), and the proposal is compared with the human label:
     failed             the model call or its output was unusable
     other              anything else (e.g. label `uncertain`, engine found a value)
 
-Rows are per retrieval profile, so `light` and `deep` can be compared on the same cases.
+Rows are per retrieval profile AND per grouping (S05), so `light` and `deep`, or one call per task and
+tasks that share a call (`--grouping off,auto`), can be compared on the same cases. The evidence is retrieved once per
+case and profile and reused by every grouping, so the only difference between two rows is how the model was asked.
+`ExtractionReport.differences()` lists the tasks whose outcome changed between groupings: read those one by one.
 """
 
 import time
@@ -25,10 +28,11 @@ from ..artifacts import ArtifactStore
 from ..config import RuntimeConfig
 from ..contracts.candidate import ProposalOutcome
 from ..contracts.common import StrictModel, TaskKind, TaskStatus
-from ..events import progress
-from ..extraction import extract_value
+from ..events import emit, progress
+from ..extraction import ask_batch, conclude_task
 from ..indexing.builder import IndexBuilder
 from ..parsing.metrics import normalize_text
+from ..planning import plan_extraction
 from ..retrieval.retrieval_pipeline import gather_evidence
 from ..retrieval.tools import build_retrieval_tools
 from ..retrieval.types import request_from_task
@@ -49,6 +53,12 @@ class ExtractionRow(StrictModel):
     tasks: int
     counts: dict[str, int]
     mean_seconds: float
+    grouping: str = "off"  # S05: off = one extraction call per task, auto = tasks that share evidence share a call
+    model_calls: int = 0  # distinct calls to the chat model (a shared call counts once)
+    extraction_calls: int = 0  # ...of which extraction calls (the rest verify / choose)
+    prompt_tokens: int = 0  # as reported by the model server (0 when it reports none)
+    completion_tokens: int = 0
+    model_seconds: float = 0.0  # seconds the chat model took, summed over the distinct calls
 
     def rate(self, name: str) -> float:
         return self.counts.get(name, 0) / self.tasks if self.tasks else 0.0
@@ -63,23 +73,46 @@ class TaskOutcome(StrictModel):
     expected: object = None
     got: object = None
     reason: str = ""
+    grouping: str = "off"
+    shared_with: list[str] = []  # the other tasks that were answered by the same extraction call
 
 
 class ExtractionReport(StrictModel):
     rows: list[ExtractionRow]
-    outcomes: list[TaskOutcome]  # one per task and profile, so every miss can be inspected
+    outcomes: list[TaskOutcome]  # one per task, profile and grouping, so every miss can be inspected
+
+    def differences(self) -> list[dict]:
+        """Tasks whose outcome or value differs between groupings (same case, task and profile): the A/B comparison, task by task."""
+        by_task: dict[tuple, dict[str, TaskOutcome]] = {}
+        for o in self.outcomes:
+            by_task.setdefault((o.case_id, o.task_id, o.profile), {})[o.grouping] = o
+        rows = []
+        for (case_id, task_id, profile), arms in by_task.items():
+            if len(arms) > 1 and len({(a.outcome, repr(a.got)) for a in arms.values()}) > 1:
+                rows.append({"case_id": case_id, "task_id": task_id, "profile": profile, "description": next(iter(arms.values())).description,
+                             "arms": {g: {"outcome": a.outcome, "got": a.got, "shared_with": a.shared_with, "reason": a.reason}
+                                      for g, a in arms.items()}})
+        return rows
 
     def format(self) -> str:
-        head = f"{'profile':<10}{'tasks':>6}{'correct':>9}{'wrong':>7}{'cited':>7}{'abst.':>7}{'falseabs':>9}{'falseval':>9}{'fail':>6}{'sec':>7}"
+        head = (f"{'profile':<10}{'group':<6}{'tasks':>6}{'correct':>9}{'wrong':>7}{'cited':>7}{'abst.':>7}{'falseabs':>9}{'falseval':>9}{'fail':>6}"
+                f"{'sec':>7}{'calls':>7}{'extract':>8}{'prompt tok':>11}")
         pct = lambda r, n: f"{r.rate(n) * 100:5.0f}%"
         lines = [head]
         for r in self.rows:
-            lines.append(f"{r.profile:<10}{r.tasks:>6}{pct(r, 'correct'):>9}{pct(r, 'wrong'):>7}{pct(r, 'wrong_but_cited'):>7}"
+            lines.append(f"{r.profile:<10}{r.grouping:<6}{r.tasks:>6}{pct(r, 'correct'):>9}{pct(r, 'wrong'):>7}{pct(r, 'wrong_but_cited'):>7}"
                          f"{pct(r, 'abstained'):>7}{pct(r, 'false_absence'):>9}{pct(r, 'false_value'):>9}{pct(r, 'failed'):>6}"
-                         f"{r.mean_seconds:>7.1f}")
+                         f"{r.mean_seconds:>7.1f}{r.model_calls:>7}{r.extraction_calls:>8}{r.prompt_tokens:>11}")
         lines.append("")
-        lines += [f"  {o.outcome:<16}{o.case_id}/{o.task_id} [{o.profile}] expected={o.expected!r} got={o.got!r} {o.reason}"
+        lines += [f"  {o.outcome:<16}{o.case_id}/{o.task_id} [{o.profile}/{o.grouping}] expected={o.expected!r} got={o.got!r} {o.reason}"
                   for o in self.outcomes if o.outcome not in ("correct", "correct_absence", "correct_uncertain")]
+        changed = self.differences()
+        if changed:
+            lines += ["", f"Tasks whose result changed between groupings ({len(changed)}):"]
+            for d in changed:
+                lines.append(f"  {d['case_id']}/{d['task_id']} [{d['profile']}]: " + "  |  ".join(
+                    f"{g}: {a['outcome']} {a['got']!r}" + (f" (call shared with {', '.join(a['shared_with'])})" if a["shared_with"] else "")
+                    for g, a in d["arms"].items()))
         return "\n".join(lines)
 
 
@@ -126,14 +159,22 @@ def classify(expected_status: TaskStatus, expected_value, proposal, passage_text
 def evaluate_extraction(
     corpus: Corpus, config: RuntimeConfig, adapters: AdapterSet, store: ArtifactStore, profiles: list[str],
     kinds: list[TaskKind] | None = None, tags: list[str] | None = None, case_ids: list[str] | None = None,
+    groupings: list[str] | None = None,
 ) -> ExtractionReport:
     """Score extraction on the labeled tasks of the selected `kinds` (default: all implemented) and, optionally,
-    only on cases carrying every tag in `tags` (e.g. `split:test`, `digital`) and, if `case_ids` is given, only on those cases."""
+    only on cases carrying every tag in `tags` (e.g. `split:test`, `digital`) and, if `case_ids` is given, only on those cases.
+
+    `groupings` (default: the runtime config's `planning.grouping`) runs the same cases once per setting, e.g. ["off", "auto"]
+    to compare one call per task with tasks that share a call. Each case is planned (S05) over its labeled tasks."""
     kinds = kinds or list(IMPLEMENTED_KINDS)
     missing = [k.value for k in kinds if k not in IMPLEMENTED_KINDS]
     if missing:
         raise ValueError(f"extraction for task kind(s) {missing} is not implemented yet; "
                          f"available: {[k.value for k in IMPLEMENTED_KINDS]}")
+    groupings = groupings or [config.planning.grouping]
+    bad = [g for g in groupings if g not in ("off", "auto")]
+    if bad:
+        raise ValueError(f"unknown grouping {bad}; use off or auto")
     unknown = [i for i in case_ids or [] if i not in {c.case_id for c in corpus.cases}]
     if unknown:
         raise ValueError(f"unknown case id(s) {unknown}")
@@ -152,33 +193,60 @@ def evaluate_extraction(
         prepared.append((case, spec, manifest, indexed))
 
     rows, outcomes = [], []
+    retrieved: dict[tuple, tuple] = {}  # (profile, case) -> evidence of every labeled task, shared by all groupings
     for profile in profiles:
         settings = config.retrieval.resolve(profile)
-        counts: Counter = Counter()
-        tasks, seconds = 0, 0.0
-        for case_number, (case, spec, manifest, indexed) in enumerate(prepared, start=1):
-            progress("eval", case_number, len(prepared), f"cases ({profile})")
-            texts = {p.passage_id: p.text for d in indexed.values() for p in d.passages}
-            for task in spec.tasks:
-                expected = case.expected.get(task.id)
-                if task.kind not in kinds or expected is None:
+        extraction = config.extraction_for(profile)
+        for grouping in groupings:
+            planning = config.planning.model_copy(update={"grouping": grouping})
+            counts: Counter = Counter()
+            tasks, seconds = 0, 0.0
+            calls: dict[int, object] = {}  # distinct model calls (a shared call is one object seen by several tasks)
+            for case_number, (case, spec, manifest, indexed) in enumerate(prepared, start=1):
+                progress("eval", case_number, len(prepared), f"cases ({profile}, grouping {grouping})")
+                texts = {p.passage_id: p.text for d in indexed.values() for p in d.passages}
+                wanted = [t for t in spec.tasks if t.kind in kinds and case.expected.get(t.id) is not None]
+                if not wanted:
                     continue
+                if (profile, case.case_id) not in retrieved:  # S06 for every labeled task, once
+                    started = time.time()
+                    packages, document_ids = {}, {}
+                    for task in wanted:
+                        document_ids[task.id] = resolve_task_documents(task, manifest)
+                        packages[task.id] = gather_evidence(
+                            request_from_task(task, document_ids[task.id]), [indexed[d] for d in document_ids[task.id] if d in indexed],
+                            tools, settings, manifest=manifest, profile=profile)
+                    retrieved[(profile, case.case_id)] = (packages, document_ids, time.time() - started)
+                packages, document_ids, retrieval_seconds = retrieved[(profile, case.case_id)]
+
                 started = time.time()
-                document_ids = resolve_task_documents(task, manifest)
-                documents = [indexed[d] for d in document_ids if d in indexed]
-                package = gather_evidence(request_from_task(task, document_ids), documents, tools, settings,
-                                          manifest=manifest, profile=profile)
-                proposal = extract_value(task, package, documents, adapters.extractor, config.extraction_for(profile))
-                seconds += time.time() - started
-                tasks += 1
-                outcome = classify(expected.status, expected.value, proposal, texts,
-                                   [e.quote for e in expected.evidence if e.quote])
-                counts[outcome] += 1
-                if outcome in ("wrong", "wrong_but_cited"):
-                    counts["wrong"] += outcome == "wrong_but_cited"  # "wrong" counts both; "wrong_but_cited" is a subset
-                outcomes.append(TaskOutcome(case_id=case.case_id, task_id=task.id, profile=profile, description=task.description, outcome=outcome,
-                                            expected=expected.value if expected.status == TaskStatus.SUPPORTED else expected.status.value,
-                                            got=proposal.value if proposal.outcome == ProposalOutcome.FOUND else proposal.outcome.value,
-                                            reason=proposal.reason[:160]))
-        rows.append(ExtractionRow(profile=profile, tasks=tasks, counts=dict(counts), mean_seconds=seconds / tasks if tasks else 0.0))
+                by_id = {t.id: t for t in wanted}
+                plan = plan_extraction(packages, by_id, planning, extraction, adapters.extractor)   # S05
+                asked = {}
+                for batch in plan.batches:                                                          # S07 steps 1-4, once per batch
+                    batch_documents = list(dict.fromkeys(d for t in batch.task_ids for d in document_ids[t]))
+                    asked.update(ask_batch([by_id[t] for t in batch.task_ids], packages, [indexed[d] for d in batch_documents if d in indexed],
+                                           adapters.extractor, extraction, planning))
+                for task in wanted:                                                                 # S07 steps 5-10, once per task
+                    proposal = conclude_task(asked[task.id], adapters.extractor, extraction)
+                    tasks += 1
+                    expected = case.expected[task.id]
+                    outcome = classify(expected.status, expected.value, proposal, texts, [e.quote for e in expected.evidence if e.quote])
+                    counts[outcome] += 1
+                    if outcome in ("wrong", "wrong_but_cited"):
+                        counts["wrong"] += outcome == "wrong_but_cited"  # "wrong" counts both; "wrong_but_cited" is a subset
+                    calls.update({id(c): c for c in proposal.calls})
+                    outcomes.append(TaskOutcome(
+                        case_id=case.case_id, task_id=task.id, profile=profile, grouping=grouping, description=task.description, outcome=outcome,
+                        expected=expected.value if expected.status == TaskStatus.SUPPORTED else expected.status.value,
+                        got=proposal.value if proposal.outcome == ProposalOutcome.FOUND else proposal.outcome.value,
+                        reason=proposal.reason[:160], shared_with=asked[task.id].shared_with))
+                seconds += retrieval_seconds + time.time() - started
+            replies = [c.reply for c in calls.values()]
+            rows.append(ExtractionRow(
+                profile=profile, grouping=grouping, tasks=tasks, counts=dict(counts), mean_seconds=seconds / tasks if tasks else 0.0,
+                model_calls=len(calls), extraction_calls=sum(c.purpose.startswith("extract") for c in calls.values()),
+                prompt_tokens=sum(r.prompt_tokens or 0 for r in replies), completion_tokens=sum(r.completion_tokens or 0 for r in replies),
+                model_seconds=round(sum(r.seconds or 0 for r in replies), 1)))
+            emit("eval", f"{profile} / grouping {grouping}: {tasks} task(s), {len(calls)} model call(s)", "ok")
     return ExtractionReport(rows=rows, outcomes=outcomes)

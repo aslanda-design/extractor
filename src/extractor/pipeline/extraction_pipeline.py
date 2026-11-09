@@ -9,11 +9,12 @@ owns that stage; steps marked STUB are not built yet and report `failed`.
         S02  compile the YAML                                 spec/
         S03  parse each document                              parsing/        (inside S04's builder)
         S04  chunk + index each document                      indexing/       chunking_pipeline.py
+        run_pipeline
+            for each task: S01 which documents may it read? + S06 retrieve evidence    scope/, retrieval/ (retrieval_pipeline.py)
+            S05  plan which tasks share a model call          planning/       planning_pipeline.py
+            S07  ask the model, once per batch of the plan    extraction/     value_pipeline.py (ask_batch)
         for each task, in dependency order -> process_task
-            S01  which documents may this task read?          scope/
-            S05  plan                                         STUB (phase 9)
-            S06  retrieve evidence                            retrieval/      retrieval_pipeline.py
-            S07  extract a value                              extraction/     value_pipeline.py
+            S07  conclude: from the answer to one proposal    extraction/     value_pipeline.py (conclude_task)
             S08  interpret                                    STUB (phase 7)
             S09  discover records                             STUB (phase 8)
             S10  validate                                     validation/     validation_pipeline.py
@@ -40,23 +41,25 @@ from ..contracts.common import Completeness, EvidenceRole, TaskKind
 from ..contracts.coverage import CoverageLedger
 from ..contracts.candidate import ProposalOutcome, ValueProposal
 from ..contracts.evidence import EvidencePackage
+from ..contracts.plan import ExtractionPlan
 from ..contracts.passage import IndexedDocument
 from ..contracts.result import EvidenceLink, ExecutionMetadata
 from ..contracts.validation import ValidationReport
 from ..contracts.task import OnAbsent, TaskSpecification
 from ..events import emit, progress
-from ..extraction import extract_value
+from ..extraction import Asked, ask_batch, ask_task, conclude_task
 from ..validation import Validated, validate_and_accept
 from ..validation.qualification import is_qualified, qualification_key
 from ..retrieval.queries import build_queries
 from ..indexing.builder import IndexBuilder
+from ..planning import plan_extraction
 from ..retrieval.retrieval_pipeline import gather_evidence
 from ..retrieval.tools import build_retrieval_tools
 from ..retrieval.types import RetrievalTools, request_from_task
 from ..scope import DocumentRequest, build_manifest, resolve_task_documents
 from ..spec import compile_specification_file
 
-STAGE_VERSIONS = {"S01": "1", "S02": "1", "S03": "1", "S04": "1", "S06": "1", "S07": "2", "S10": "1", "S11": "1"}
+STAGE_VERSIONS = {"S01": "1", "S02": "1", "S03": "1", "S04": "1", "S05": "1", "S06": "1", "S07": "4", "S10": "1", "S11": "1"}
 
 
 @dataclass
@@ -74,6 +77,8 @@ class RunContext:
     execution: ExecutionMetadata
     ledger: CoverageLedger = field(default_factory=CoverageLedger)
     evidence: dict[str, EvidencePackage] = field(default_factory=dict)
+    plan: ExtractionPlan | None = None
+    asked: dict[str, Asked] = field(default_factory=dict)  # what the model said, per value task (S07 steps 1-4)
     proposals: dict[str, ValueProposal] = field(default_factory=dict)
     decisions: dict[str, Validated] = field(default_factory=dict)
     accepted: set[str] = field(default_factory=set)  # tasks whose answer was accepted, for depends_on checks
@@ -108,6 +113,30 @@ def run_extraction(
     return run_pipeline(spec, manifest, adapters, config, indexed, store=store, profile=profile)
 
 
+def _context(
+    spec: CompiledSpecification, manifest: DocumentManifest, adapters: AdapterSet, config: RuntimeConfig,
+    indexed: dict[str, IndexedDocument] | None, store: ArtifactStore | None, profile: str | None,
+) -> RunContext:
+    return RunContext(
+        spec=spec, manifest=manifest, adapters=adapters, config=config, indexed=indexed,
+        tools=build_retrieval_tools(config, adapters, store) if indexed is not None and store else None,
+        retrieval=config.retrieval.resolve(profile), profile=profile or config.retrieval.profile, store=store,
+        execution=ExecutionMetadata(
+            document_hashes={d.document_id: d.sha256 for d in manifest.documents},
+            schema_hash=spec.schema_hash, runtime_fingerprint=config.fingerprint(),
+            models=adapters.model_labels(), stage_versions=STAGE_VERSIONS))
+
+
+def plan_only(
+    spec: CompiledSpecification, manifest: DocumentManifest, adapters: AdapterSet, config: RuntimeConfig,
+    indexed: dict[str, IndexedDocument], store: ArtifactStore, profile: str | None = None,
+) -> RunContext:
+    """S06 + S05 only (no chat model): the evidence of every task and the plan made from it. For the UI and the CLI."""
+    ctx = _context(spec, manifest, adapters, config, indexed, store, profile)
+    retrieve_all(spec, ctx)
+    return ctx
+
+
 def run_pipeline(
     spec: CompiledSpecification,
     manifest: DocumentManifest,
@@ -126,14 +155,11 @@ def run_pipeline(
     given, receives the EvidencePackage of every task that went through retrieval;
     `proposals_out` the ValueProposal of every value task that was extracted.
     """
-    ctx = RunContext(
-        spec=spec, manifest=manifest, adapters=adapters, config=config, indexed=indexed,
-        tools=build_retrieval_tools(config, adapters, store) if indexed is not None and store else None,
-        retrieval=config.retrieval.resolve(profile), profile=profile or config.retrieval.profile, store=store,
-        execution=ExecutionMetadata(
-            document_hashes={d.document_id: d.sha256 for d in manifest.documents},
-            schema_hash=spec.schema_hash, runtime_fingerprint=config.fingerprint(),
-            models=adapters.model_labels(), stage_versions=STAGE_VERSIONS))
+    ctx = _context(spec, manifest, adapters, config, indexed, store, profile)
+
+    # S06 for every task first (no model involved), then S05 looks at all the evidence at once.
+    retrieve_all(spec, ctx)
+    ask_all(spec, ctx)
 
     results = {}
     for n, task_id in enumerate(spec.graph.order, start=1):
@@ -149,8 +175,39 @@ def run_pipeline(
     return [results[t.id] for t in spec.tasks]
 
 
+def retrieve_all(spec: CompiledSpecification, ctx: RunContext) -> None:
+    """S06 for every value / interpretation task, then S05: the plan made from all the evidence."""
+    if ctx.tools is None or ctx.indexed is None:
+        return  # no index: the retrieval stage is skipped
+    retrievable = [t for t in spec.graph.order if spec.task(t).kind != TaskKind.RECORDS]  # records: whole scope, S09
+    for n, task_id in enumerate(retrievable, start=1):
+        task = spec.task(task_id)
+        document_ids = resolve_task_documents(task, ctx.manifest)
+        documents = [ctx.indexed[d] for d in document_ids if d in ctx.indexed]
+        ctx.evidence[task_id] = gather_evidence(request_from_task(task, document_ids), documents, ctx.tools, ctx.retrieval,
+                                                manifest=ctx.manifest, ledger=ctx.ledger, profile=ctx.profile)
+        progress("S06", n, len(retrievable), "tasks have their evidence")
+    values = {t: ctx.evidence[t] for t in retrievable if spec.task(t).kind == TaskKind.VALUE}
+    if values:
+        ctx.plan = plan_extraction(values, {t: spec.task(t) for t in values}, ctx.config.planning,
+                                   ctx.config.extraction_for(ctx.profile), ctx.adapters.extractor)
+
+
+def ask_all(spec: CompiledSpecification, ctx: RunContext) -> None:
+    """S07 steps 1-4: one model call per batch of the plan (a batch is one task, or several that share evidence)."""
+    if ctx.plan is None or ctx.indexed is None:
+        return
+    batches = ctx.plan.batches
+    for n, batch in enumerate(batches, start=1):
+        tasks = [spec.task(t) for t in batch.task_ids]
+        document_ids = list(dict.fromkeys(d for t in tasks for d in resolve_task_documents(t, ctx.manifest)))
+        ctx.asked.update(ask_batch(tasks, ctx.evidence, [ctx.indexed[d] for d in document_ids if d in ctx.indexed], ctx.adapters.extractor,
+                                   ctx.config.extraction_for(ctx.profile), ctx.config.planning, ledger=ctx.ledger))
+        progress("S07", n, len(batches), "extraction calls done")
+
+
 def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
-    """One task through the stages."""
+    """One task through the stages (its evidence was gathered by `retrieve_all`)."""
     notes: list[str] = []
 
     # S01. Which documents may this task read?
@@ -165,14 +222,10 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
         notes.append(f"indexed {len(docs)} document(s): {sum(len(d.passages) for d in docs)} passage(s), "
                      f"{sum(len(d.coverage.unresolved()) for d in docs)} unresolved parsing gap(s)")
 
-    # S05. Plan: grouping tasks that share evidence, budgets, concurrency.   STUB (phase 9)
-
-    # S06. Retrieve evidence. Records are discovered over the whole scope in S09, not by retrieval.
-    if ctx.tools is not None and ctx.indexed is not None and task.kind != TaskKind.RECORDS:
-        documents = [ctx.indexed[d] for d in document_ids if d in ctx.indexed]
-        package = gather_evidence(request_from_task(task, document_ids), documents, ctx.tools, ctx.retrieval,
-                                  manifest=ctx.manifest, ledger=ctx.ledger, profile=ctx.profile)
-        ctx.evidence[task.id] = package
+    # S05. Plan: which tasks share a model call (made once for all tasks in `retrieve_all`).
+    # S06. Retrieve evidence (also done in `retrieve_all`; here only its summary). Records are discovered in S09, not by retrieval.
+    if task.id in ctx.evidence:
+        package = ctx.evidence[task.id]
         notes.append(f"evidence ({ctx.profile}): {len(package.passages)} passage(s), "
                      f"{package.trace.used_tokens}/{package.trace.budget_tokens} tokens, {len(package.gaps)} gap(s)")
 
@@ -180,8 +233,11 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
     status, value, alternatives, evidence, validation, acceptance = TaskStatus.FAILED, None, [], [], ValidationReport(), None
     if task.id in ctx.evidence and task.kind == TaskKind.VALUE:
         scope_docs = [ctx.indexed[d] for d in document_ids if d in ctx.indexed]
-        proposal = extract_value(task, ctx.evidence[task.id], scope_docs, ctx.adapters.extractor,
-                                 ctx.config.extraction_for(ctx.profile), ledger=ctx.ledger)
+        settings = ctx.config.extraction_for(ctx.profile)
+        asked = ctx.asked.get(task.id) or ask_task(task, ctx.evidence[task.id], scope_docs, ctx.adapters.extractor, settings, ledger=ctx.ledger)
+        proposal = conclude_task(asked, ctx.adapters.extractor, settings)
+        if asked.shared_with:
+            notes.append(f"extraction call shared with {', '.join(asked.shared_with)}")
         ctx.proposals[task.id] = proposal
         notes.append(f"extraction ({proposal.outcome.value}): {proposal.reason}")
 

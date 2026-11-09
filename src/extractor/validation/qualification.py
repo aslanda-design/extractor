@@ -20,8 +20,9 @@ def qualification_key(config: RuntimeConfig, adapters: AdapterSet, profile: str 
     name = profile or config.retrieval.profile
     acceptance = config.acceptance.model_dump(exclude={"require_qualification", "qualification"})
     labels = adapters.model_labels()
+    grouping = [config.planning] if config.planning.grouping != "off" else []  # shared calls can change answers; "off" keeps earlier records valid
     return fingerprint(name, labels.get("extraction"), labels.get("verification"), config.extraction_for(name),
-                       config.retrieval.resolve(name), acceptance)
+                       config.retrieval.resolve(name), acceptance, *grouping)
 
 
 def is_qualified(store: ArtifactStore | None, key: str) -> bool:

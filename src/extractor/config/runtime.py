@@ -199,6 +199,17 @@ class ExtractionSettings(StrictModel):
     allow_unlocated_quotes: bool = True  # keep candidates whose quote is not in the evidence (flagged), instead of dropping them
 
 
+class PlanningSettings(StrictModel):
+    """S05 knobs: which value tasks may share ONE model call. Every limit is a plain number, so a model with a larger
+    context or a bigger output allowance only needs different numbers here (nothing in the code names a model)."""
+
+    grouping: Literal["off", "auto"] = "off"  # off = one extraction call per task; auto = tasks that share evidence share a call
+    max_fields_per_call: int = Field(default=3, ge=2)  # tasks answered by one call
+    max_foreign_share: float = Field(default=0.3, ge=0, le=1)  # a task may see at most this share of passages that its own retrieval did not pick
+    output_tokens_per_field: int = Field(default=256, ge=1)  # expected size of one task's answer: fields x this must fit the model's output limit
+    reask_absent: Literal["always", "never"] = "always"  # a task the shared call found nothing for is asked again alone (false absence is the worst error)
+
+
 class QualificationThresholds(StrictModel):
     """What a model + settings combination must reach on YOUR labeled corpus to be qualified (S11)."""
 
@@ -234,6 +245,7 @@ class RuntimeConfig(StrictModel):
     indexing: IndexingConfig = IndexingConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
     extraction: ExtractionSettings = ExtractionSettings()
+    planning: PlanningSettings = PlanningSettings()
     acceptance: AcceptanceSettings = AcceptanceSettings()
     extraction_profiles: dict[str, dict] = {}  # profile name -> ExtractionSettings fields to change at that depth
     storage: StorageConfig = StorageConfig()
@@ -241,7 +253,7 @@ class RuntimeConfig(StrictModel):
     def fingerprint(self) -> str:
         """Identity of the settings that can change results (storage path excluded)."""
         return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking,
-                           self.retrieval.resolve(), self.extraction, self.extraction_profiles, self.acceptance)
+                           self.retrieval.resolve(), self.extraction, self.planning, self.extraction_profiles, self.acceptance)
 
     def extraction_for(self, profile: str | None = None) -> ExtractionSettings:
         """S07 settings at the given depth: the base `extraction:` block, the built-in profile of that name, then yours."""

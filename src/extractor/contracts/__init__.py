@@ -7,6 +7,7 @@ One file per contract family:
     specification.py  YAML file + compiled output (S02)
     document.py       DocumentRepresentation      (S03/S04)
     evidence.py       EvidencePackage             (S06)
+    plan.py           ExtractionPlan / Batch      (S05)
     candidate.py      Candidate / ValueProposal / interpretation  (S07/S08)
     generation.py     ModelPrompt / ModelReply    (S07+)
     passage.py        Passage / IndexedDocument   (S04)
@@ -31,6 +32,7 @@ from .generation import ModelPrompt, ModelReply
 from .document import DocumentRepresentation, ParsingIssue, SourceBlock
 from .evidence import EvidenceItem, EvidenceOrigin, EvidencePackage, EvidencePassage, RetrievalTrace
 from .manifest import DocumentEntry, DocumentManifest, DocumentRelationship, Scope
+from .plan import Batch, EvidenceOverlap, ExtractionPlan
 from .passage import Continuation, IndexedDocument, Passage, PassageSegment, Reference
 from .record import FieldResult, Record
 from .result import EvidenceLink, ExecutionMetadata, TaskResult
@@ -46,5 +48,5 @@ __all__ = [
     "FieldResult", "Record", "EvidenceLink", "ExecutionMetadata", "TaskResult",
     "CompiledSpecification", "SpecificationFile", "SpecIssue", "TaskSpecification",
     "AcceptanceDecision", "Category", "RecoveryHint", "ValidationFinding", "ValidationReport", "Continuation", "IndexedDocument", "Passage",
-    "PassageSegment", "Reference", "EvidenceOrigin", "EvidencePassage", "RetrievalTrace",
+    "PassageSegment", "Reference", "EvidenceOrigin", "EvidencePassage", "RetrievalTrace", "Batch", "EvidenceOverlap", "ExtractionPlan",
 ]
