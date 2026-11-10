@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import model_validator
 
+from .candidate import Interpretation
 from .common import Completeness, EvidenceRole, SourceRef, StrictModel, TaskKind, TaskStatus
 from .record import Record
 from .validation import AcceptanceDecision, ValidationReport
@@ -36,6 +37,7 @@ class TaskResult(StrictModel):
     validation: ValidationReport = ValidationReport()
     acceptance: AcceptanceDecision | None = None  # why the engine gave this status (S11)
     alternatives: list[Any] = []  # tentative values live here, not in `value`
+    interpretation: Interpretation | None = None  # interpretation tasks: every quote by label, the justification, tool results (S08)
     diagnostics: list[str] = []  # technical errors, kept apart from uncertainty
     execution: ExecutionMetadata = ExecutionMetadata()
 

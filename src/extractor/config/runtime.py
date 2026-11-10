@@ -210,6 +210,26 @@ class PlanningSettings(StrictModel):
     reask_absent: Literal["always", "never"] = "always"  # a task the shared call found nothing for is asked again alone (false absence is the worst error)
 
 
+class InterpretationSettings(StrictModel):
+    """S08 knobs: how interpretation tasks (label decisions under criteria) talk to the model.
+
+    WHICH model is `models.interpretation` (when it is left as `fake`, the extraction model is used)."""
+
+    max_evidence: int = Field(default=10, ge=1)  # quotes the model may list per call
+    retries: int = Field(default=1, ge=0)
+    prompt_margin: float = Field(default=0.1, ge=0.0, lt=0.9)
+    think: bool | None = True  # True = reason before answering. On the corpus (30 tasks, Qwen3 8B) it took correct answers from 24 to 27 of 30, at 2x the time
+    think_judge: bool | None = True  # None = the adapter default; False = fast
+    judge: bool = True  # one extra call that can only downgrade a label (never adds or changes one)
+    tools: list[str] = ["calculate", "compare_numbers"]  # deterministic tools the model may ask the engine to run (arithmetic)
+    max_tool_calls: int = Field(default=3, ge=0)
+    unresolved_references_block_absence: bool = True  # same meaning as in `extraction:`
+    unresolved_attachments_block_absence: bool = False
+
+
+BUILTIN_INTERPRETATION_PROFILES: dict[str, dict] = {"light": {"think": False, "think_judge": False}, "deep": {"think": True, "think_judge": True}}
+
+
 class QualificationThresholds(StrictModel):
     """What a model + settings combination must reach on YOUR labeled corpus to be qualified (S11)."""
 
@@ -248,12 +268,15 @@ class RuntimeConfig(StrictModel):
     planning: PlanningSettings = PlanningSettings()
     acceptance: AcceptanceSettings = AcceptanceSettings()
     extraction_profiles: dict[str, dict] = {}  # profile name -> ExtractionSettings fields to change at that depth
+    interpretation: InterpretationSettings = InterpretationSettings()
+    interpretation_profiles: dict[str, dict] = {}  # profile name -> InterpretationSettings fields to change at that depth
     storage: StorageConfig = StorageConfig()
 
     def fingerprint(self) -> str:
         """Identity of the settings that can change results (storage path excluded)."""
         return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking,
-                           self.retrieval.resolve(), self.extraction, self.planning, self.extraction_profiles, self.acceptance)
+                           self.retrieval.resolve(), self.extraction, self.planning, self.extraction_profiles, self.acceptance,
+                           self.interpretation, self.interpretation_profiles)
 
     def extraction_for(self, profile: str | None = None) -> ExtractionSettings:
         """S07 settings at the given depth: the base `extraction:` block, the built-in profile of that name, then yours."""
@@ -262,10 +285,18 @@ class RuntimeConfig(StrictModel):
         return self.extraction.model_copy(update=changes) if not changes else ExtractionSettings.model_validate(
             {**self.extraction.model_dump(), **changes})
 
+    def interpretation_for(self, profile: str | None = None) -> InterpretationSettings:
+        """S08 settings at the given depth: the base `interpretation:` block, the built-in profile of that name, then yours."""
+        name = profile or self.retrieval.profile
+        changes = {**BUILTIN_INTERPRETATION_PROFILES.get(name, {}), **self.interpretation_profiles.get(name, {})}
+        return InterpretationSettings.model_validate({**self.interpretation.model_dump(), **changes})
+
     @model_validator(mode="after")
     def _validate_extraction_profiles(self):
         for name in self.extraction_profiles:
             self.extraction_for(name)  # fail at config load, not in the middle of a run
+        for name in self.interpretation_profiles:
+            self.interpretation_for(name)
         return self
 
     def parsing_fingerprint(self) -> str:

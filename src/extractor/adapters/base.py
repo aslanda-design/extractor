@@ -14,7 +14,7 @@ from typing import Sequence
 
 from ..artifacts.store import ArtifactStore
 from ..config.runtime import ParsingConfig
-from ..contracts.candidate import Candidate, InterpretationProposal
+from ..contracts.candidate import Candidate
 from ..contracts.common import StrictModel
 from ..contracts.document import DocumentRepresentation
 from ..contracts.evidence import EvidencePackage
@@ -149,13 +149,13 @@ class ExtractorAdapter(Adapter):
         return max(1, (len(text) + 3) // 4) if text else 0
 
 
-class InterpreterAdapter(Adapter):
-    capability = Capability.INTERPRETATION
+class InterpreterAdapter(ExtractorAdapter):
+    """The model behind S08 (interpretation). Same contract as the extractor: prompt + schema -> JSON.
 
-    @abstractmethod
-    def interpret(
-        self, task: TaskSpecification, evidence: EvidencePackage
-    ) -> InterpretationProposal: ...
+    `models.interpretation` can name a different (bigger, reasoning) model than `models.extraction`; when it is left
+    as `fake` the engine uses the extraction model for interpretation tasks."""
+
+    capability = Capability.INTERPRETATION
 
 
 class VerifierAdapter(ExtractorAdapter):

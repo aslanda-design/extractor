@@ -15,7 +15,7 @@ owns that stage; steps marked STUB are not built yet and report `failed`.
             S07  ask the model, once per batch of the plan    extraction/     value_pipeline.py (ask_batch)
         for each task, in dependency order -> process_task
             S07  conclude: from the answer to one proposal    extraction/     value_pipeline.py (conclude_task)
-            S08  interpret                                    STUB (phase 7)
+            S08  interpret: decide a label under criteria     interpretation/ interpretation_pipeline.py
             S09  discover records                             STUB (phase 8)
             S10  validate                                     validation/     validation_pipeline.py
             S11  accept                                       validation/     (same file: policy.py)
@@ -48,6 +48,7 @@ from ..contracts.validation import ValidationReport
 from ..contracts.task import OnAbsent, TaskSpecification
 from ..events import emit, progress
 from ..extraction import Asked, ask_batch, ask_task, conclude_task
+from ..interpretation.interpretation_pipeline import interpret_task
 from ..validation import Validated, validate_and_accept
 from ..validation.qualification import is_qualified, qualification_key
 from ..retrieval.queries import build_queries
@@ -229,17 +230,21 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
         notes.append(f"evidence ({ctx.profile}): {len(package.passages)} passage(s), "
                      f"{package.trace.used_tokens}/{package.trace.budget_tokens} tokens, {len(package.gaps)} gap(s)")
 
-    # S07. Extract a value (value tasks). S08 interpretation and S09 records come in phases 7 and 8.
+    # S07 / S08. Extract a value (value tasks) or decide a label under criteria (interpretation tasks). S09 records: phase 8.
     status, value, alternatives, evidence, validation, acceptance = TaskStatus.FAILED, None, [], [], ValidationReport(), None
-    if task.id in ctx.evidence and task.kind == TaskKind.VALUE:
+    if task.id in ctx.evidence and task.kind in (TaskKind.VALUE, TaskKind.INTERPRETATION):
         scope_docs = [ctx.indexed[d] for d in document_ids if d in ctx.indexed]
         settings = ctx.config.extraction_for(ctx.profile)
-        asked = ctx.asked.get(task.id) or ask_task(task, ctx.evidence[task.id], scope_docs, ctx.adapters.extractor, settings, ledger=ctx.ledger)
-        proposal = conclude_task(asked, ctx.adapters.extractor, settings)
-        if asked.shared_with:
-            notes.append(f"extraction call shared with {', '.join(asked.shared_with)}")
+        if task.kind == TaskKind.VALUE:
+            asked = ctx.asked.get(task.id) or ask_task(task, ctx.evidence[task.id], scope_docs, ctx.adapters.extractor, settings, ledger=ctx.ledger)
+            proposal = conclude_task(asked, ctx.adapters.extractor, settings)
+            if asked.shared_with:
+                notes.append(f"extraction call shared with {', '.join(asked.shared_with)}")
+        else:
+            proposal = interpret_task(task, ctx.evidence[task.id], scope_docs, ctx.adapters.interpretation_model,
+                                      ctx.config.interpretation_for(ctx.profile), ledger=ctx.ledger)
         ctx.proposals[task.id] = proposal
-        notes.append(f"extraction ({proposal.outcome.value}): {proposal.reason}")
+        notes.append(f"{'extraction' if task.kind == TaskKind.VALUE else 'interpretation'} ({proposal.outcome.value}): {proposal.reason}")
 
         # S10 + S11. Validate the proposal and apply the engine's acceptance policy.
         query = build_queries(request_from_task(task, document_ids), ctx.retrieval).rerank
@@ -258,7 +263,7 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
         notes += [f"{status.value}: {why}" for why in validated.decision.reasons[:3]]
         notes += [f"info: {f.message}" for f in validated.report.findings if f.severity.value == "info"][:5]
     else:
-        notes.append("extraction stages S08 and S09 are not implemented yet" if task.kind != TaskKind.VALUE
+        notes.append("extraction stage S09 (records) is not implemented yet" if task.kind == TaskKind.RECORDS
                      else "no evidence was gathered, so nothing could be extracted")
 
     # S12. Recover: retry the affected stage with a concrete improvement.     STUB (phase 9)
@@ -268,6 +273,7 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
     # S13. The result.
     return TaskResult(
         task_id=task.id, kind=task.kind, status=status, value=value, alternatives=alternatives, evidence=evidence,
+        interpretation=ctx.proposals[task.id].interpretation if task.id in ctx.proposals else None,
         completeness=Completeness.UNKNOWN if task.kind == TaskKind.RECORDS else None,
         validation=validation, acceptance=acceptance, diagnostics=notes, execution=ctx.execution)
 
@@ -280,6 +286,9 @@ def _result_parts(proposal: ValueProposal, validated: Validated):
     """
     status = validated.decision.status
     chosen_evidence = [EvidenceLink(ref=ref, role=EvidenceRole.SUPPORTS, quote=c.quote) for c in proposal.chosen for ref in c.evidence]
+    if proposal.interpretation and proposal.outcome == ProposalOutcome.FOUND:  # quotes that point at another label are kept, as contradicting
+        chosen_evidence += [EvidenceLink(ref=ref, role=EvidenceRole.CONTRADICTS, quote=s.quote)
+                            for s in proposal.interpretation.stances if s.label != proposal.value for ref in s.evidence]
     if status == TaskStatus.SUPPORTED:
         return status, proposal.value, [], chosen_evidence
     if proposal.outcome == ProposalOutcome.FOUND:

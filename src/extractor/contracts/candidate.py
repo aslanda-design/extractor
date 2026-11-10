@@ -24,11 +24,27 @@ class Candidate(StrictModel):
     derivation: str | None = None  # "k1 - k2" when the value was computed
 
 
-class InterpretationProposal(StrictModel):
-    label: str | None  # allowed label or generated answer; None = abstain
-    justification: str = ""  # auditable explanation, not hidden reasoning
-    citations: list[SourceRef] = []
-    unresolved_issues: list[str] = []
+class Stance(StrictModel):
+    """One quote an interpretation rests on: which label it supports and how (S08)."""
+
+    stance_id: str  # "e1", "e2"... within one interpretation
+    label: str  # the allowed label this quote supports
+    role: str = "supports"  # supports | supersedes (an amendment that replaces earlier wording)
+    quote: str | None = None
+    passage_id: str | None = None
+    evidence: list[SourceRef] = []  # source blocks the quote was located in (empty = not located)
+    flags: list[str] = []  # quote_not_located, quote_approximate, ...
+
+
+class Interpretation(StrictModel):
+    """What S08 concluded and why (an auditable explanation, never hidden reasoning)."""
+
+    label: str | None = None  # the allowed label; None = the evidence states no decision
+    justification: str = ""
+    conditions: list[str] = []  # conditions / exceptions the model says attach to the decision
+    unresolved: list[str] = []  # what the model could not settle
+    stances: list[Stance] = []  # every quote it listed, by label, located in the evidence
+    tool_results: list[dict] = []  # deterministic tool calls (arithmetic) the engine ran for the model
 
 
 class ProposalOutcome(StrEnum):
@@ -58,3 +74,4 @@ class ValueProposal(StrictModel):
     steps: list[str] = []  # reconciliation log, in order
     calls: list[ModelCall] = []
     gaps: list[str] = []  # evidence the model never saw (budget) or that retrieval flagged
+    interpretation: Interpretation | None = None  # S08 tasks only: the stances and justification behind the label

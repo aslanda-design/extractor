@@ -318,7 +318,7 @@ def _uncertain(proposal: ValueProposal, reason: str, log: list[str]) -> ValuePro
 _ATTACHMENTS = ("schedule", "exhibit", "appendix", "appendices", "annex")
 
 
-def _blocks_absence(gap: str, settings: ExtractionSettings) -> bool:
+def blocks_absence(gap: str, settings: ExtractionSettings) -> bool:
     """Does this retrieval gap stop us from calling an empty answer 'absent'?
 
     Content that was left out (budget, failed calls) always does. An unresolved reference to a section of the
@@ -357,7 +357,7 @@ def _conclude_empty(
         errors = {c.reply.error for c in proposal.calls}
         return proposal.model_copy(update={"outcome": ProposalOutcome.FAILED, "steps": log,
                                            "reason": "the model returned no usable answer: " + "; ".join(sorted(map(str, errors)))})
-    blocking = [g for g in proposal.gaps if _blocks_absence(g, settings)]
+    blocking = [g for g in proposal.gaps if blocks_absence(g, settings)]
     if blocking:
         return _uncertain(proposal, "no value found, but the evidence is incomplete: " + blocking[0], log)
     return proposal.model_copy(update={"outcome": ProposalOutcome.ABSENT, "steps": log,

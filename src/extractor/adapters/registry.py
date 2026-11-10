@@ -9,6 +9,7 @@ from typing import Callable
 
 from ..artifacts.store import ArtifactStore
 from ..config.runtime import RuntimeConfig
+from .fakes import FakeInterpreter
 from .base import (
     Adapter,
     AdapterContext,
@@ -44,6 +45,11 @@ class AdapterSet:
     extractor: ExtractorAdapter
     interpreter: InterpreterAdapter
     verifier: VerifierAdapter
+
+    @property
+    def interpretation_model(self) -> ExtractorAdapter:
+        """The model S08 talks to: `models.interpretation`, or the extraction model while that one is left as `fake`."""
+        return self.extractor if isinstance(self.interpreter, FakeInterpreter) else self.interpreter
 
     def all(self) -> dict[Capability, Adapter]:
         return {

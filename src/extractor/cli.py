@@ -253,7 +253,12 @@ def cmd_eval(args: argparse.Namespace) -> int:
         tags = args.tags.split(",") if args.tags else None
         case_ids = args.cases.split(",") if args.cases else None
         groupings = args.grouping.split(",") if args.grouping else None
-        print(evaluate_extraction(corpus, config, build_adapters(config, store), store, profiles, kinds, tags, case_ids, groupings).format())
+        print(evaluate_extraction(corpus, config, build_adapters(config, store), store, profiles, kinds, tags, case_ids, groupings,
+                                  save_dir=args.save).format())
+    if args.attribute:
+        from .evaluation.attribution import attribute
+
+        print(attribute(args.attribute).format())
     if args.acceptance and corpus.cases:
         from .evaluation.acceptance_eval import evaluate_acceptance
 
@@ -336,8 +341,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--overlap", action="store_true", help="measure how much evidence the value tasks of a case share (S05; no chat model needed)")
     p.add_argument("--extraction", action="store_true", help="measure value extraction (correct / wrong / false absence...)")
     p.add_argument("--acceptance", action="store_true", help="measure what the engine ACCEPTS (S10/S11): automation, precision, false accepts")
-    p.add_argument("--save", type=Path, help="--acceptance only: store every evidence package and proposal in this folder")
+    p.add_argument("--save", type=Path, help="--extraction / --acceptance: store every evidence package, proposal and what the labeler expected in this folder (for --attribute and --from)")
     p.add_argument("--from", dest="from_dir", type=Path, help="--acceptance only: re-run validation on proposals saved with --save (no model calls)")
+    p.add_argument("--attribute", type=Path, help="read the folder written by --save and say, for every miss, which stage caused it and whether it can be fixed (no model calls)")
     p.add_argument("--qualify", action="store_true", help="--acceptance only: write a qualification record when the thresholds in acceptance.qualification are met")
     p.add_argument("--profile", help="retrieval profile(s) to evaluate, comma separated (e.g. light,standard,deep)")
     p.add_argument("--kinds", help="--extraction / --acceptance only: task kinds to score, comma separated (value,interpretation,records; default: all implemented)")

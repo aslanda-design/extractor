@@ -17,7 +17,7 @@ One file per contract family:
     result.py         TaskResult                  (S13)
 """
 
-from .candidate import Candidate, InterpretationProposal, ModelCall, ProposalOutcome, ValueProposal
+from .candidate import Candidate, Interpretation, ModelCall, ProposalOutcome, Stance, ValueProposal
 from .common import (
     Completeness,
     EvidenceRole,
@@ -41,7 +41,7 @@ from .task import TaskSpecification
 from .validation import AcceptanceDecision, Category, RecoveryHint, ValidationFinding, ValidationReport
 
 __all__ = [
-    "Candidate", "InterpretationProposal", "ModelCall", "ModelPrompt", "ModelReply", "ProposalOutcome", "ValueProposal", "Completeness", "EvidenceRole", "MutableModel",
+    "Candidate", "Interpretation", "ModelCall", "Stance", "ModelPrompt", "ModelReply", "ProposalOutcome", "ValueProposal", "Completeness", "EvidenceRole", "MutableModel",
     "SourceRef", "StrictModel", "TaskKind", "TaskStatus", "CoverageEntry", "CoverageLedger",
     "CoverageState", "DocumentRepresentation", "ParsingIssue", "SourceBlock", "EvidenceItem",
     "EvidencePackage", "DocumentEntry", "DocumentManifest", "DocumentRelationship", "Scope",

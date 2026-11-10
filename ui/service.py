@@ -36,7 +36,9 @@ from extractor.contracts.specification import SpecificationFile
 from extractor.contracts.task import LabelSpec
 from extractor.evaluation import CorpusError, load_corpus
 from extractor.evaluation.acceptance_eval import evaluate_acceptance
+from extractor.evaluation.attribution import FIXABLE, attribute
 from extractor.evaluation.extraction_eval import IMPLEMENTED_KINDS, evaluate_extraction
+from extractor.interpretation.interpretation_pipeline import interpret_task
 from extractor.evaluation.indexing_eval import evaluate_indexing
 from extractor.evaluation.overlap_eval import evaluate_overlap
 from extractor.evaluation.parsing_eval import evaluate_parsing
@@ -176,6 +178,7 @@ class Workspace:
         """Names the UI can offer (everything registered in the engine) and the retrieval profiles."""
         retrieval = self.get_config().retrieval
         return {"extraction": registered_adapters(Capability.EXTRACTION),
+                "interpretation": registered_adapters(Capability.INTERPRETATION),
                 "verification": registered_adapters(Capability.VERIFICATION),
                 "acceptance_profiles": ["strict", "standard", "lenient"],
                 "embedding": registered_adapters(Capability.EMBEDDING),
@@ -440,16 +443,20 @@ class Workspace:
 
     @staticmethod
     def _task_from_form(form: dict) -> TaskSpecification:
-        """A value task described in the UI form (the same fields as the YAML)."""
+        """A value or interpretation task described in the UI form (the same fields as the YAML)."""
         labels = [{"name": l["name"], "meaning": l.get("meaning") or l["name"]} for l in form.get("labels") or [] if l.get("name")]
         output = {"type": "label" if labels else form.get("type") or "string",  # allowed answers make it a label task
                   "cardinality": form.get("cardinality") or "one", "labels": labels}
         rules = {k: form[k].strip() for k in ("normalization", "derivation", "ambiguity") if (form.get(k) or "").strip()}
         rules["precedence"] = [l.strip() for l in (form.get("precedence") or "").split("\n") if l.strip()]
         rules["on_absent"] = form.get("on_absent") or "not_found"
+        rules["decision_criteria"] = [c.strip() for c in (form.get("criteria") or "").splitlines() if c.strip()]
+        interpretation = form.get("kind") == "interpretation"
+        if interpretation and not labels:
+            raise UiError("an interpretation task needs the allowed answers (labels)")
         try:
             return TaskSpecification(
-                id="query", kind=TaskKind.VALUE, description=(form.get("text") or "").strip(), output=output,
+                id="query", kind=TaskKind.INTERPRETATION if interpretation else TaskKind.VALUE, description=(form.get("text") or "").strip(), output=output,
                 scope={"entity": (form.get("entity") or "").strip() or None, "time": (form.get("time") or "").strip() or None},
                 rules=rules)
         except ValidationError as exc:
@@ -481,7 +488,10 @@ class Workspace:
                                    embedder=adapters.embedder, reranker=adapters.reranker)
             package = gather_evidence(request_from_task(task), indexed, tools, settings, manifest=manifest, profile=profile_name)
             retrieved_at = time.time()
-            proposal = extract_value(task, package, indexed, adapters.extractor, config.extraction_for(profile_name))
+            if task.kind == TaskKind.INTERPRETATION:                            # S08
+                proposal = interpret_task(task, package, indexed, adapters.interpretation_model, config.interpretation_for(profile_name))
+            else:                                                               # S07
+                proposal = extract_value(task, package, indexed, adapters.extractor, config.extraction_for(profile_name))
             validated = validate_and_accept(                                    # S10 + S11
                 task, proposal, package, indexed, config.acceptance, scorer=lambda q, t: adapters.reranker.score(q, t),
                 query=build_queries(request_from_task(task), settings).rerank, verifier=adapters.verifier,
@@ -498,7 +508,9 @@ class Workspace:
                     "document": filenames.get(p.document_id) if p else None, "pages": p.pages if p else []}
 
         return {
-            "task": task.model_dump(mode="json"), "model": adapters.extractor.identity.label(),
+            "task": task.model_dump(mode="json"),
+            "model": (adapters.interpretation_model if task.kind == TaskKind.INTERPRETATION else adapters.extractor).identity.label(),
+            "interpretation": proposal.interpretation.model_dump(mode="json") if proposal.interpretation else None,
             "outcome": proposal.outcome.value, "value": proposal.value, "reason": proposal.reason, "steps": proposal.steps,
             "gaps": proposal.gaps, "candidates": [candidate(c) for c in proposal.candidates],
             "calls": [{"purpose": c.purpose, "system": c.prompt.system, "user": c.prompt.user, "schema": c.prompt.json_schema,
@@ -658,15 +670,19 @@ class Workspace:
         config = self.get_config()
         with self._job("Measure value extraction"):
             _, adapters = self._builder(config)
+            saved = self.store.root / "evals" / time.strftime("extraction-%Y%m%d-%H%M%S")  # kept: `eval --attribute <folder>` reads it
             try:
                 report = evaluate_extraction(corpus, config, adapters, self.store, [config.retrieval.profile],
-                                             [TaskKind(k) for k in kinds or []] or None, tags or None, cases or None, groupings or None)
+                                             [TaskKind(k) for k in kinds or []] or None, tags or None, cases or None, groupings or None,
+                                             save_dir=saved)
             except ValueError as exc:
                 raise UiError(str(exc))
+        causes = attribute(saved)  # which stage caused each miss, and whether it can be fixed
         return {"rows": [r.model_dump(mode="json") for r in report.rows],
                 "misses": [o.model_dump(mode="json") for o in report.outcomes
                            if o.outcome not in ("correct", "correct_absence", "correct_uncertain")],
-                "differences": report.differences()}
+                "differences": report.differences(), "saved_to": str(saved),
+                "causes": {"counts": causes.counts(), "fixable": FIXABLE, "rows": [r.model_dump(mode="json") for r in causes.rows if r.cause != "ok"]}}
 
     @recorded("corpus.acceptance")
     def corpus_acceptance(self, kinds: list[str] | None = None, tags: list[str] | None = None,

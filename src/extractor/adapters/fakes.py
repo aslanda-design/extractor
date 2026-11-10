@@ -7,7 +7,6 @@ nothing was parsed, the fake interpreter abstains, and so on.
 from pathlib import Path
 from typing import Sequence
 
-from ..contracts.candidate import InterpretationProposal
 from ..contracts.generation import ModelPrompt, ModelReply
 from ..contracts.document import DocumentRepresentation, IssueKind, ParsingIssue
 from ..contracts.evidence import EvidencePackage
@@ -63,12 +62,12 @@ class FakeExtractor(ExtractorAdapter):
 
 
 class FakeInterpreter(InterpreterAdapter):
+    """No model: every call reports that (the engine then falls back to the extraction model)."""
+
     identity = _FAKE
 
-    def interpret(
-        self, task: TaskSpecification, evidence: EvidencePackage
-    ) -> InterpretationProposal:
-        return InterpretationProposal(label=None, unresolved_issues=["fake interpreter abstains"])
+    def generate(self, prompt: ModelPrompt) -> ModelReply:
+        return ModelReply(error="fake interpreter: no model configured (set models.interpretation in the runtime config)")
 
 
 class FakeVerifier(VerifierAdapter):

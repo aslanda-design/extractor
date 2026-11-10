@@ -22,6 +22,7 @@ case and profile and reused by every grouping, so the only difference between tw
 
 import time
 from collections import Counter
+from pathlib import Path
 
 from ..adapters.registry import AdapterSet
 from ..artifacts import ArtifactStore
@@ -31,6 +32,7 @@ from ..contracts.common import StrictModel, TaskKind, TaskStatus
 from ..events import emit, progress
 from ..extraction import ask_batch, conclude_task
 from ..indexing.builder import IndexBuilder
+from ..interpretation.interpretation_pipeline import interpret_task
 from ..parsing.metrics import normalize_text
 from ..planning import plan_extraction
 from ..retrieval.retrieval_pipeline import gather_evidence
@@ -38,11 +40,13 @@ from ..retrieval.tools import build_retrieval_tools
 from ..retrieval.types import request_from_task
 from ..scope import DocumentRequest, build_manifest, resolve_task_documents
 from ..spec import compile_specification_file
+from .attribution import save_record
 from .corpus import Corpus
+from .matching import same_value  # noqa: F401  (re-exported: other evaluators import it from here)
 
-# Task kinds the engine can extract today. Add a kind here when its extractor exists (interpretation: phase 7,
-# records: phase 8); the evaluator, CLI (`--kinds`) and UI then accept it without other changes.
-IMPLEMENTED_KINDS = [TaskKind.VALUE]
+# Task kinds the engine can extract today. Add a kind here when its extractor exists (records: phase 8);
+# the evaluator, CLI (`--kinds`) and UI then accept it without other changes.
+IMPLEMENTED_KINDS = [TaskKind.VALUE, TaskKind.INTERPRETATION]
 
 OUTCOMES = ["correct", "wrong", "wrong_but_cited", "abstained", "false_absence", "correct_absence",
             "false_value", "correct_uncertain", "failed", "other"]
@@ -116,27 +120,6 @@ class ExtractionReport(StrictModel):
         return "\n".join(lines)
 
 
-def _plain(value) -> str:
-    """Text compared the way a human labeler would: case, spacing, punctuation and a leading article do not matter."""
-    import re
-
-    return re.sub(r"^(the|a|an) ", "", normalize_text(str(value)))
-
-
-def same_value(expected, got) -> bool:
-    """Equality that ignores case, spacing and numeric type (5 == 5.0 == "5"); amounts compare amount and currency."""
-    if isinstance(expected, dict) and isinstance(got, dict):
-        return (float(expected.get("amount", 0)) == float(got.get("amount", 0))
-                and (expected.get("currency") or "").upper() == (got.get("currency") or "").upper())
-    if isinstance(expected, list) or isinstance(got, list):
-        a, b = (expected if isinstance(expected, list) else [expected]), (got if isinstance(got, list) else [got])
-        return len(a) == len(b) and all(any(same_value(x, y) for y in b) for x in a)
-    try:
-        return float(str(expected).replace(",", "")) == float(str(got).replace(",", ""))
-    except ValueError:
-        return _plain(expected) == _plain(got)
-
-
 def classify(expected_status: TaskStatus, expected_value, proposal, passage_texts: dict[str, str], gold_quotes: list[str]) -> str:
     outcome = proposal.outcome
     if outcome == ProposalOutcome.FAILED:
@@ -159,7 +142,7 @@ def classify(expected_status: TaskStatus, expected_value, proposal, passage_text
 def evaluate_extraction(
     corpus: Corpus, config: RuntimeConfig, adapters: AdapterSet, store: ArtifactStore, profiles: list[str],
     kinds: list[TaskKind] | None = None, tags: list[str] | None = None, case_ids: list[str] | None = None,
-    groupings: list[str] | None = None,
+    groupings: list[str] | None = None, save_dir: Path | None = None,
 ) -> ExtractionReport:
     """Score extraction on the labeled tasks of the selected `kinds` (default: all implemented) and, optionally,
     only on cases carrying every tag in `tags` (e.g. `split:test`, `digital`) and, if `case_ids` is given, only on those cases.
@@ -220,15 +203,19 @@ def evaluate_extraction(
                 packages, document_ids, retrieval_seconds = retrieved[(profile, case.case_id)]
 
                 started = time.time()
-                by_id = {t.id: t for t in wanted}
-                plan = plan_extraction(packages, by_id, planning, extraction, adapters.extractor)   # S05
+                by_id = {t.id: t for t in wanted if t.kind == TaskKind.VALUE}  # S05 plans value tasks; S08 answers each interpretation alone
+                plan = plan_extraction({t: packages[t] for t in by_id}, by_id, planning, extraction, adapters.extractor) if by_id else None   # S05
                 asked = {}
-                for batch in plan.batches:                                                          # S07 steps 1-4, once per batch
+                for batch in plan.batches if plan else []:                                                          # S07 steps 1-4, once per batch
                     batch_documents = list(dict.fromkeys(d for t in batch.task_ids for d in document_ids[t]))
                     asked.update(ask_batch([by_id[t] for t in batch.task_ids], packages, [indexed[d] for d in batch_documents if d in indexed],
                                            adapters.extractor, extraction, planning))
                 for task in wanted:                                                                 # S07 steps 5-10, once per task
-                    proposal = conclude_task(asked[task.id], adapters.extractor, extraction)
+                    if task.kind == TaskKind.VALUE:
+                        proposal = conclude_task(asked[task.id], adapters.extractor, extraction)
+                    else:                                                                           # S08, one task at a time
+                        proposal = interpret_task(task, packages[task.id], [indexed[d] for d in document_ids[task.id] if d in indexed],
+                                                  adapters.interpretation_model, config.interpretation_for(profile))
                     tasks += 1
                     expected = case.expected[task.id]
                     outcome = classify(expected.status, expected.value, proposal, texts, [e.quote for e in expected.evidence if e.quote])
@@ -236,16 +223,18 @@ def evaluate_extraction(
                     if outcome in ("wrong", "wrong_but_cited"):
                         counts["wrong"] += outcome == "wrong_but_cited"  # "wrong" counts both; "wrong_but_cited" is a subset
                     calls.update({id(c): c for c in proposal.calls})
+                    if save_dir:
+                        save_record(save_dir, f"{case.case_id}__{task.id}__{profile}.json", task, expected, packages[task.id], proposal, texts, case.case_id)
                     outcomes.append(TaskOutcome(
                         case_id=case.case_id, task_id=task.id, profile=profile, grouping=grouping, description=task.description, outcome=outcome,
                         expected=expected.value if expected.status == TaskStatus.SUPPORTED else expected.status.value,
                         got=proposal.value if proposal.outcome == ProposalOutcome.FOUND else proposal.outcome.value,
-                        reason=proposal.reason[:160], shared_with=asked[task.id].shared_with))
+                        reason=proposal.reason[:160], shared_with=asked[task.id].shared_with if task.id in asked else []))
                 seconds += retrieval_seconds + time.time() - started
             replies = [c.reply for c in calls.values()]
             rows.append(ExtractionRow(
                 profile=profile, grouping=grouping, tasks=tasks, counts=dict(counts), mean_seconds=seconds / tasks if tasks else 0.0,
-                model_calls=len(calls), extraction_calls=sum(c.purpose.startswith("extract") for c in calls.values()),
+                model_calls=len(calls), extraction_calls=sum(c.purpose.startswith(("extract", "interpret")) for c in calls.values()),
                 prompt_tokens=sum(r.prompt_tokens or 0 for r in replies), completion_tokens=sum(r.completion_tokens or 0 for r in replies),
                 model_seconds=round(sum(r.seconds or 0 for r in replies), 1)))
             emit("eval", f"{profile} / grouping {grouping}: {tasks} task(s), {len(calls)} model call(s)", "ok")

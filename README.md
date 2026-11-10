@@ -238,6 +238,7 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `planning/` | S05 | **`planning_pipeline.py` is the whole planning stage in one readable file**: after retrieval and before any model call, it measures how much evidence the value tasks share (`overlap.py`) and, with `planning.grouping: auto`, decides which tasks are answered by the same model call (`grouping.py`; `extraction/capacity.py` says what one call can hold). | Planning behaviour: `planning_pipeline.py` and `grouping.py`; limits: `planning:` in the runtime config |
 | `retrieval/` | S06 | **`retrieval_pipeline.py` is the whole evidence-retrieval pipeline in one readable file** (queries -> candidates -> fusion -> rerank -> selection -> expansion -> packaging). Helpers: `queries.py`, `candidates.py`, `fusion.py`, `rerank.py`, `selection.py`, `definitions.py`, `expansion.py`, `packaging.py`; `report.py` prints a run's trace. | Retrieval behaviour: `retrieval_pipeline.py` and its helper; depth: `retrieval.profile(s)` in the runtime config |
 | `extraction/` | S07 | **`value_pipeline.py` is the whole value-extraction pipeline in one readable file** (tag passages -> split by context -> ask the model -> read candidates and locate their quotes -> normalize -> derive -> reconcile -> conclude). Helpers: `prompts.py` (what the model is told), `schema.py` (JSON schema it must follow), `partition.py`, `reading.py`, `quotes.py`, `normalize.py` (dates, numbers, amounts by code), `derivation.py` (arithmetic by code, only when the task allows), `reconcile.py`, `choosing.py` (precedence rules), `calling.py`, `report.py` | Behaviour: `value_pipeline.py` and its helper; wording: `prompts.py`; model: `models.extraction` in the runtime config |
+| `interpretation/` | S08 | **`interpretation_pipeline.py` is the whole interpretation stage in one readable file** (frame -> evidence -> ask -> read quotes -> check by code -> judge -> conclude). Helpers: `prompts.py`, `schema.py`, `reading.py`, `checks.py`, `judging.py`, `tools.py` (exact calculations the engine runs for the model; MCP-shaped definitions) | Behaviour: `interpretation_pipeline.py` and its helper; wording: `prompts.py`; model: `models.interpretation`; knobs: `interpretation:` |
 | `validation/` | S10, S11 | **`validation_pipeline.py` is the whole validation and acceptance stage in one readable file** (structure -> grounding -> normalization -> consistency -> coverage / risk register -> optional semantic check -> qualification -> policy -> decision). Helpers: `structure.py`, `grounding.py`, `numeric.py`, `consistency.py`, `coverage_check.py`, `semantic.py`, `policy.py` (profiles), `qualification.py`, `findings.py` | Behaviour: `validation_pipeline.py` and the layer it calls; which findings block: `policy.py` or `acceptance:` in the runtime config |
 | `pipeline/` | all | **`extraction_pipeline.py` is the whole engine in one readable file**: S01-S13 as numbered calls, real or marked STUB. Each phase turns its STUB line into a call. | `extraction_pipeline.py` |
 | `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing (`parsing_eval.py`), chunking (`indexing_eval.py`), retrieval (`retrieval_eval.py`) and value-extraction (`extraction_eval.py`) quality. | `corpus.py` for the label format |
@@ -365,6 +366,38 @@ the finding `quote_relocated` is recorded (information for `standard`, blocking 
 Retrieval scores and model confidence are never used to accept: on the labeled corpus neither separated right answers from
 wrong ones. `python -m extractor eval --acceptance` reports automation rate, accepted-answer precision, false accepts,
 false absences and the blocking findings; `--save` / `--from` make tuning a profile a matter of seconds.
+
+### How interpretation works (S08)
+
+An interpretation task decides a label under criteria ("may the CRO subcontract?" -> `permitted` / `conditional` / `prohibited`).
+Open `src/extractor/interpretation/interpretation_pipeline.py`: `interpret_task` is seven numbered steps.
+
+1. **Frame:** the question, every label with its meaning and the task's `decision_criteria`.
+2. **Evidence:** the S06 package, cut to what fits ONE call (a decision weighs all the evidence together); passages left out become gaps, never silence.
+3. **Ask:** the model lists, for each label, the quotes that support it (`supports`, or `supersedes` for an amendment), then the label (or `none`),
+   a two-sentence justification, the conditions that attach and what it could not settle. Exceptions and conditions must be listed even when they point at another label.
+   If the decision needs a calculation, the model asks for it (`tool_calls`), the engine runs it exactly and the model answers again with the result.
+4. **Read:** every quote is searched in the evidence by code; a quote that is not there never counts.
+5. **Check:** the chosen label needs a located quote; located quotes for other labels are "competing evidence".
+6. **Judge:** one call that can only downgrade the label to `uncertain` (an exception ignored, a request read as an approval...). Turn it off with `interpretation.judge: false`.
+7. **Conclude:** `found` | `absent` (the model found no decision and nothing was missed) | `uncertain` (conflict, unbacked label, judge disagrees, evidence incomplete) | `failed`.
+
+The proposal then goes through S10/S11 exactly like a value. `TaskResult.interpretation` keeps every quote by label, the justification and the tool results.
+
+```yaml
+models:
+  interpretation: {name: ollama_chat, params: {model: "qwen3:14b", context_tokens: 16384}}   # optional: while `fake`, the extraction model is used
+interpretation:
+  judge: true            # downgrade-only second look
+  think: true            # reason before answering (default: +3 correct of 30 on the corpus, 2x the time); `light` profile = false
+  tools: [calculate, compare_numbers]
+```
+
+**To do (not forgotten):** generated `text` answers (summaries grounded in evidence) for interpretation tasks; the corpus has none yet. **Tools:** `tools.py` registers
+in-process tools whose definitions have the MCP shape, so tools served by an MCP server can be added later with a small adapter (not built yet).
+
+**Finding out why answers are wrong:** `eval --extraction --kinds interpretation --save DIR` stores every package, proposal and the labeled quotes;
+`eval --attribute DIR` (also shown in the Corpus tab) puts each miss in one cause (parse, retrieval, evidence, judgement, false decision, failure) and says what can be fixed.
 
 ### How value extraction works (S07)
 

@@ -33,6 +33,7 @@ from ..contracts.evidence import EvidencePackage
 from ..events import progress
 from ..extraction import extract_value
 from ..indexing.builder import IndexBuilder
+from ..interpretation.interpretation_pipeline import interpret_task
 from ..retrieval.queries import build_queries
 from ..retrieval.retrieval_pipeline import gather_evidence
 from ..retrieval.tools import build_retrieval_tools
@@ -41,6 +42,7 @@ from ..scope import DocumentRequest, build_manifest, resolve_task_documents
 from ..spec import compile_specification_file
 from ..validation import validate_and_accept
 from ..validation.qualification import qualification_key, write_qualification
+from .attribution import save_record
 from .corpus import Corpus
 from .extraction_eval import IMPLEMENTED_KINDS, same_value
 
@@ -175,7 +177,7 @@ def evaluate_acceptance(
                 document_ids = resolve_task_documents(task, manifest)
                 documents = [indexed[d] for d in document_ids if d in indexed]
                 package, proposal = _package_and_proposal(
-                    task, case.case_id, profile, documents, document_ids, manifest, tools, settings, adapters, extraction, save_dir, from_dir)
+                    task, expected, case.case_id, profile, documents, document_ids, manifest, tools, settings, adapters, config, save_dir, from_dir)
                 query = build_queries(request_from_task(task, document_ids), settings).rerank
                 validated = validate_and_accept(
                     task, proposal, package, documents, config.acceptance, scorer=lambda q, t: tools.reranker.score(q, t), query=query,
@@ -205,17 +207,18 @@ def evaluate_acceptance(
     return AcceptanceReport(rows=rows, outcomes=outcomes)
 
 
-def _package_and_proposal(task, case_id, profile, documents, document_ids, manifest, tools, settings, adapters, extraction, save_dir, from_dir):
+def _package_and_proposal(task, expected, case_id, profile, documents, document_ids, manifest, tools, settings, adapters, config, save_dir, from_dir):
     name = f"{case_id}__{task.id}__{profile}.json"
     if from_dir:
         saved = json.loads((Path(from_dir) / name).read_text(encoding="utf-8"))
         return EvidencePackage.model_validate(saved["package"]), ValueProposal.model_validate(saved["proposal"])
     package = gather_evidence(request_from_task(task, document_ids), documents, tools, settings, manifest=manifest, profile=profile)
-    proposal = extract_value(task, package, documents, adapters.extractor, extraction)
+    if task.kind == TaskKind.INTERPRETATION:
+        proposal = interpret_task(task, package, documents, adapters.interpretation_model, config.interpretation_for(profile))
+    else:
+        proposal = extract_value(task, package, documents, adapters.extractor, config.extraction_for(profile))
     if save_dir:
-        Path(save_dir).mkdir(parents=True, exist_ok=True)
-        (Path(save_dir) / name).write_text(json.dumps({"package": package.model_dump(mode="json"), "proposal": proposal.model_dump(mode="json")},
-                                                      ensure_ascii=False), encoding="utf-8")
+        save_record(save_dir, name, task, expected, package, proposal, {p.passage_id: p.text for d in documents for p in d.passages}, case_id)
     return package, proposal
 
 

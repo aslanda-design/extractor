@@ -165,11 +165,12 @@ tr.dim td{color:var(--muted)}
 <!-- ============ EXTRACTION ============ -->
 <section id="extr">
   <div class="card">
-    <h2>Extract a value</h2>
-    <p class="hint">Ask one question about the selected documents. The engine retrieves the evidence (S06) and the model lists every value the passages state, with a quote for each; code then normalizes, merges and reconciles them (S07). Nothing is validated or accepted yet (phase 6), so a found value is shown as a proposal.</p>
+    <h2>Extract a value or decide a question</h2>
+    <p class="hint">Ask one question about the selected documents. The engine retrieves the evidence (S06). A <b>value</b> question: the model lists every value the passages state, with a quote for each, and code normalizes, merges and reconciles them (S07). An <b>interpretation</b> question (allowed answers + decision criteria): the model lists the quotes that support each answer, the engine checks them and a judge can downgrade the label (S08). Either way the answer is only a proposal until the engine validates and accepts it (S10/S11).</p>
     <div class="row" id="extrDocs" style="margin-bottom:10px"></div>
     <textarea id="extrText" style="min-height:70px;font:inherit" placeholder="e.g. What is the current maturity date of the loan?"></textarea>
     <div class="grid" style="margin:10px 0">
+      <label>Kind<select id="extrKind"><option value="value">value (copy it from the text)</option><option value="interpretation">interpretation (decide under criteria)</option></select></label>
       <label>Answer type<select id="extrType">
         <option>string</option><option>text</option><option>number</option><option>integer</option><option>boolean</option>
         <option>date</option><option>amount</option></select></label>
@@ -184,11 +185,12 @@ tr.dim td{color:var(--muted)}
     <details style="margin-bottom:10px"><summary>Rules (optional)</summary>
       <div class="grid" style="margin-top:8px">
         <label>Precedence, one rule per line (decides between conflicting values)<textarea id="extrPrecedence" style="min-height:70px;font:inherit" placeholder="A later amendment overrides the original agreement."></textarea></label>
+        <label>Decision criteria, one per line (interpretation only)<textarea id="extrCriteria" style="min-height:70px;font:inherit" placeholder="A request for approval is not approval."></textarea></label>
         <label>Normalization hint<input id="extrNormalization" placeholder="Convert to ISO-8601"></label>
         <label>Ambiguity<input id="extrAmbiguity" placeholder="what to do when the evidence is ambiguous"></label>
         <label>Derivation (empty = calculating is NOT allowed)<input id="extrDerivation" placeholder="e.g. the number of days between two stated dates"></label>
       </div></details>
-    <details style="margin-bottom:12px"><summary>Load a value task from a specification</summary>
+    <details style="margin-bottom:12px"><summary>Load a value or interpretation task from a specification</summary>
       <div class="row" style="margin-top:8px"><select id="extrSpec"></select><select id="extrTask" class="grow"></select>
         <button class="btn ghost" id="extrUse">Use this task</button></div></details>
     <div class="row"><button class="btn" id="extrBtn">Extract</button><span class="hint" id="extrHint" style="margin:0"></span></div>
@@ -564,6 +566,15 @@ const EXTRACT_HELP = {
   think_extraction: 'Let the model reason before listing candidates (slower, more accurate)',
   think_verification: 'Let the model reason when verifying candidates', think_choice: 'Let the model reason when applying precedence rules',
 };
+const INTERP_HELP = {
+  max_evidence: 'Quotes the model may list in one answer', retries: 'Extra attempts when a model call fails',
+  prompt_margin: 'Share of the model context kept free', think: 'Let the model reason before deciding (default yes: +3 correct of 30 on the corpus, 2x the time)',
+  think_judge: 'Let the judge reason', judge: 'One extra call that can only DOWNGRADE a label (exception ignored, request read as approval...)',
+  tools: 'Exact tools the engine runs for the model (arithmetic): calculate, compare_numbers',
+  max_tool_calls: 'Most tool calls the engine runs per task (0 = no tools)',
+  unresolved_references_block_absence: 'A "see Section 9" that cannot be found keeps "no decision" uncertain, not not_found',
+  unresolved_attachments_block_absence: 'The same for Schedule / Exhibit / Appendix / Annex references',
+};
 const PLAN_HELP = {
   grouping: 'off: one extraction call per task. auto: tasks that share most of their evidence share one call (each task still reads only its own evidence)',
   max_fields_per_call: 'Most tasks answered by one call (a larger model can take more)',
@@ -615,6 +626,15 @@ async function loadConfig() {
     sel('cfgExtName', 'extraction model adapter', opts.extraction, cfg.models.extraction.name) +
     `<label>extraction model params (JSON)<input id="cfgExtParams" value="${esc(jsonText(cfg.models.extraction.params))}"><small>e.g. {"model": "qwen3:8b", "context_tokens": 16384} (ollama_chat) or {"base_url": "...", "model": "...", "api_key_env": "..."} (openai_compatible_chat)</small></label>` +
     Object.entries(cfg.extraction).map(([k, v]) => ex(k, v)).join('') +
+    sel('cfgIntName', 'interpretation model adapter (S08; fake = use the extraction model)', opts.interpretation, cfg.models.interpretation.name) +
+    `<label>interpretation model params (JSON)<input id="cfgIntParams" value="${esc(jsonText(cfg.models.interpretation.params))}"><small>a reasoning or bigger model is allowed, e.g. {"model": "qwen3:14b"}</small></label>` +
+    Object.entries(cfg.interpretation).map(([k, v]) => k === 'tools'
+      ? `<label>tools<input data-in="tools" value="${esc(v.join(', '))}"><small>${INTERP_HELP.tools}</small></label>`
+      : k.startsWith('think')
+      ? `<label>${k}<select data-in="${k}"><option value="" ${v == null ? 'selected' : ''}>adapter default</option><option value="true" ${v === true ? 'selected' : ''}>yes</option><option value="false" ${v === false ? 'selected' : ''}>no</option></select><small>${INTERP_HELP[k] || ''}</small></label>`
+      : typeof v === 'boolean'
+      ? `<label>${k}<select data-in="${k}"><option ${v ? 'selected' : ''} value="true">yes</option><option ${v ? '' : 'selected'} value="false">no</option></select><small>${INTERP_HELP[k] || ''}</small></label>`
+      : `<label>${k}<input data-in="${k}" type="number" step="any" value="${v}"><small>${INTERP_HELP[k] || ''}</small></label>`).join('') +
     Object.entries(cfg.planning).map(([k, v]) => ['grouping', 'reask_absent'].includes(k)
       ? `<label>${k}<select data-pl="${k}">${(k === 'grouping' ? ['off', 'auto'] : ['always', 'never']).map(o => `<option ${o === v ? 'selected' : ''}>${o}</option>`).join('')}</select><small>${PLAN_HELP[k]}</small></label>`
       : `<label>${k}<input data-pl="${k}" type="number" step="any" value="${v}"><small>${PLAN_HELP[k]}</small></label>`).join('') +
@@ -651,6 +671,10 @@ $('#cfgSave').onclick = async () => {
     next.acceptance[k] = ['block', 'allow'].includes(k) ? list(v) : k === 'profile' ? v : v === 'true' ? true : v === 'false' ? false : v === '' ? null : Number(v);
   });
   document.querySelectorAll('#idxForm [data-acq]').forEach(el => { next.acceptance.qualification[el.dataset.acq] = Number(el.value); });
+  document.querySelectorAll('#idxForm [data-in]').forEach(el => {
+    const k = el.dataset.in, v = el.value;
+    next.interpretation[k] = k === 'tools' ? v.split(',').map(t => t.trim()).filter(Boolean) : v === 'true' ? true : v === 'false' ? false : v === '' ? null : Number(v);
+  });
   document.querySelectorAll('#idxForm [data-pl]').forEach(el => { next.planning[el.dataset.pl] = el.tagName === 'SELECT' ? el.value : Number(el.value); });
   document.querySelectorAll('#idxForm [data-ex]').forEach(el => {
     const k = el.dataset.ex, v = el.value;
@@ -662,6 +686,7 @@ $('#cfgSave').onclick = async () => {
     next.models.reranking = {name: $('#cfgRerName').value, params: parse('#cfgRerParams')};
     next.models.extraction = {name: $('#cfgExtName').value, params: parse('#cfgExtParams')};
     next.models.verification = {name: $('#cfgVerName').value, params: parse('#cfgVerParams')};
+    next.models.interpretation = {name: $('#cfgIntName').value, params: parse('#cfgIntParams')};
     next.retrieval.profile = $('#cfgProfile').value;
     next.indexing.lexical_store = {name: $('#cfgLexName').value, params: parse('#cfgLexParams')};
     next.indexing.vector_store = {name: $('#cfgVecName').value, params: parse('#cfgVecParams')};
@@ -828,9 +853,21 @@ const CORPUS_RENDER = {
           return `<tr><td>${esc(o.case_id)}${r.rows.length > 1 ? `<br><small>${esc(o.profile + ' / ' + (o.grouping || 'off'))}</small>` : ''}</td><td><code>${esc(o.task_id)}</code></td>
           <td><small title="${esc(desc)}" style="display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(desc)}</small></td>
           <td>${esc(val(o.expected))}</td><td>${esc(val(o.got))}${o.reason ? `<br><small class="hint" title="${esc(o.reason)}">${esc(o.reason)}</small>` : ''}</td>
-          <td>${pill(o.outcome.replace(/_/g, ' '), o.outcome === 'abstained' ? 'warn' : 'bad')}</td></tr>`; }).join('')}</tbody></table>` : ''}`;
+          <td>${pill(o.outcome.replace(/_/g, ' '), o.outcome === 'abstained' ? 'warn' : 'bad')}</td></tr>`; }).join('')}</tbody></table>` : ''}
+      ${causesBlock(r.causes && {...r.causes, saved_to: r.saved_to})}`;
   },
 };
+const CAUSE_KIND = {parse: 'bad', retrieval: 'bad', evidence: 'warn', judgement: 'warn', false_decision: 'bad', failure: 'bad', acceptance: 'warn', abstention: 'warn'};
+function causesBlock(c) {
+  if (!c || !c.rows.length) return '';
+  return `<h2 style="margin-top:14px">Why the misses happen (${c.rows.length})</h2>
+    <p class="hint">Every miss goes to exactly one stage, from the evidence the model saw and the quotes the labeler gave. Saved in <code>${esc(c.saved_to || '')}</code>; read it again offline with <code>eval --attribute</code>.</p>
+    <table><thead><tr><th>Stage</th><th>Misses</th><th>Can it be fixed?</th></tr></thead><tbody>${Object.entries(c.counts).filter(([k]) => k !== 'ok').sort((a, b) => b[1] - a[1]).map(([k, n]) =>
+      `<tr><td>${pill(k.replace(/_/g, ' '), CAUSE_KIND[k] || '')}</td><td>${n}</td><td><small>${esc(c.fixable[k] || '')}</small></td></tr>`).join('')}</tbody></table>
+    <table style="margin-top:8px"><thead><tr><th>Business id</th><th>Field id</th><th>Stage</th><th>Expected</th><th>Got</th><th>Detail</th></tr></thead><tbody>${c.rows.map(o =>
+      `<tr><td>${esc(o.case_id)}</td><td><code>${esc(o.task_id)}</code></td><td>${pill(o.cause.replace(/_/g, ' '), CAUSE_KIND[o.cause] || '')}</td>
+       <td>${esc(typeof o.expected === 'string' ? o.expected : JSON.stringify(o.expected))}</td><td>${esc(typeof o.got === 'string' ? o.got : JSON.stringify(o.got))}</td><td><small>${esc(o.detail)}</small></td></tr>`).join('')}</tbody></table>`;
+}
 CORPUS_RENDER.overlap = r => {
   const pct = v => Math.round(v * 100) + '%';
   return `<table><thead><tr><th>Business id</th><th>Tasks</th><th>Evidence tokens</th><th>Distinct tokens</th><th>Shareable</th><th>Pairs sharing</th><th>…≥ 80% inside</th><th>…≥ 50% inside</th></tr></thead><tbody>${r.rows.map(x => `<tr>
@@ -1055,12 +1092,13 @@ async function loadExtraction() {
   if (specs.length) loadExtrTasks();
 }
 async function loadExtrTasks() {
-  try { extrTasks = (await api(`/specs/${encodeURIComponent($('#extrSpec').value)}/retrieval-tasks`)).filter(t => t.kind === 'value'); } catch (e) { extrTasks = []; }
+  try { extrTasks = (await api(`/specs/${encodeURIComponent($('#extrSpec').value)}/retrieval-tasks`)).filter(t => t.kind === 'value' || t.kind === 'interpretation'); } catch (e) { extrTasks = []; }
   $('#extrTask').innerHTML = extrTasks.map((t, i) => `<option value="${i}">${esc(t.label)}</option>`).join('');
 }
 $('#extrSpec').onchange = loadExtrTasks;
 $('#extrUse').onclick = () => {
   const t = extrTasks[$('#extrTask').value]; if (!t) return;
+  $('#extrKind').value = t.kind; $('#extrCriteria').value = (t.rules.decision_criteria || []).join('\n');
   $('#extrText').value = t.text; $('#extrEntity').value = t.entity || ''; $('#extrTime').value = t.time || '';
   $('#extrType').value = t.output.type === 'label' ? 'string' : t.output.type; $('#extrCard').value = t.output.cardinality;
   $('#extrAbsent').value = t.rules.on_absent;
@@ -1078,7 +1116,7 @@ $('#extrBtn').onclick = async e => {
   busy(e.target, true, 'Extracting…'); $('#extrHint').textContent = 'the first run indexes the documents and loads the models; the model call itself can take a while';
   try {
     const task = {text: $('#extrText').value, type: $('#extrType').value, cardinality: $('#extrCard').value, on_absent: $('#extrAbsent').value,
-      entity: $('#extrEntity').value, time: $('#extrTime').value, labels: extrLabels(), precedence: $('#extrPrecedence').value,
+      kind: $('#extrKind').value, criteria: $('#extrCriteria').value, entity: $('#extrEntity').value, time: $('#extrTime').value, labels: extrLabels(), precedence: $('#extrPrecedence').value,
       normalization: $('#extrNormalization').value, ambiguity: $('#extrAmbiguity').value, derivation: $('#extrDerivation').value};
     if (task.labels.length) task.type = 'label';
     showProposal(await api('/extract', json('POST', {documents, task, profile: $('#extrProfile').value})));
@@ -1086,6 +1124,18 @@ $('#extrBtn').onclick = async e => {
   $('#extrHint').textContent = ''; busy(e.target, false);
 };
 $('#extrText').onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('#extrBtn').click(); };
+function interpretationCard(i, labels) {
+  const by = {}; labels.forEach(l => by[l.name] = []); i.stances.forEach(s => (by[s.label] = by[s.label] || []).push(s));
+  return `<div class="card"><h2>Decision under criteria (S08)</h2>
+    <p>${i.label ? pill(i.label, 'ok') : pill('no decision', 'warn')} ${esc(i.justification)}</p>
+    ${i.conditions.length ? `<p><b>Conditions:</b> ${esc(i.conditions.join('; '))}</p>` : ''}
+    ${i.unresolved.length ? `<div class="msg warn">Unresolved: ${esc(i.unresolved.join('; '))}</div>` : ''}
+    <p class="hint">Every quote the model listed, under the label it supports. A quote the engine could not find in the evidence never counts (red). Quotes under a label other than the chosen one are the exceptions and conditions the decision had to weigh.</p>
+    ${Object.entries(by).map(([name, list]) => `<p style="margin:8px 0 2px"><b>${esc(name)}</b> ${name === i.label ? pill('chosen', 'ok') : ''} <small class="hint">${esc((labels.find(l => l.name === name) || {}).meaning || '')}</small></p>
+      ${list.length ? list.map(s => `<div class="ev ${s.evidence.length ? '' : 'qualifier'}"><div class="meta">${s.role === 'supersedes' ? pill('supersedes', 'warn') + ' ' : ''}${s.flags.map(f => pill(f, f === 'quote_not_located' || f === 'no_quote' ? 'bad' : 'warn')).join(' ')}</div>
+        <small>“${esc(s.quote || '')}”</small></div>`).join('') : '<small class="hint">no quote</small>'}`).join('')}
+    ${i.tool_results.length ? `<p><b>Calculations run by the engine:</b></p>${i.tool_results.map(t => `<pre>${esc(t.tool)} ${esc(typeof t.arguments === 'string' ? t.arguments : JSON.stringify(t.arguments))} → ${esc(JSON.stringify(t.result ?? t.error))}</pre>`).join('')}` : ''}</div>`;
+}
 const OUTCOME_KIND = {found: 'ok', absent: 'warn', uncertain: 'warn', failed: 'bad'};
 function showProposal(r) {
   const flagKind = f => f.startsWith('rejected:') || ['quote_not_located', 'no_quote', 'not_normalized', 'value_not_in_quote'].includes(f) ? 'bad' : 'warn';
@@ -1095,6 +1145,7 @@ function showProposal(r) {
       <p>${esc(r.reason)}</p>
       <p class="hint">Model ${esc(r.model)} · ${r.seconds}s in total (retrieval ${r.evidence.seconds}s) · ${r.calls.length} model call(s)</p>
       ${r.gaps.map(g => `<div class="msg warn">Gap: ${esc(g)}</div>`).join('')}</div>
+    ${r.interpretation ? interpretationCard(r.interpretation, r.task.output.labels) : ''}
     <div class="card"><h2>Validation and decision ${pill(r.validation.status, {supported: 'ok', not_found: 'ok', uncertain: 'warn', failed: 'bad'}[r.validation.status])}
         <span class="hint">${esc(r.validation.policy)} policy</span></h2>
       ${r.validation.reasons.map(x => `<p style="margin:2px 0">${esc(x)}</p>`).join('')}
@@ -1131,7 +1182,7 @@ function showProposal(r) {
 }
 
 /* ---------- logs (engine events, polled) ---------- */
-const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S05: 'plan', S06: 'retrieve', S07: 'extract', S10: 'validate', S11: 'accept', S13: 'result', eval: 'evaluate', ui: 'queue'};
+const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S05: 'plan', S06: 'retrieve', S07: 'extract', S08: 'interpret', S10: 'validate', S11: 'accept', S13: 'result', eval: 'evaluate', ui: 'queue'};
 const RUNS = new Map();   // run id -> {id,title,start,end,failed,events:[],progress:{},open:{},stages:{}}
 let logSeq = 0, lastRunId = null;
 const openRuns = new Set();
