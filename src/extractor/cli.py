@@ -259,6 +259,25 @@ def cmd_eval(args: argparse.Namespace) -> int:
         from .evaluation.attribution import attribute
 
         print(attribute(args.attribute).format())
+    if args.attribute_records:
+        from .evaluation.records_eval import attribute_records
+
+        causes = attribute_records(args.attribute_records)
+        from collections import Counter
+
+        print(f"{len(causes)} problem(s): " + ", ".join(f"{k} {n}" for k, n in Counter(c.cause for c in causes).most_common()))
+        for c in causes:
+            print(f"  {c.cause:<13}{c.case_id}/{c.task_id}: {c.what}")
+    if args.records and corpus.cases:
+        from .evaluation.records_eval import evaluate_records
+
+        config = _real_config(args.config)
+        store = ArtifactStore(config.storage.artifact_dir)
+        profiles = args.profile.split(",") if args.profile else [config.retrieval.profile]
+        tags = args.tags.split(",") if args.tags else None
+        case_ids = args.cases.split(",") if args.cases else None
+        task_ids = args.tasks.split(",") if args.tasks else None
+        print(evaluate_records(corpus, config, build_adapters(config, store), store, profiles, tags, case_ids, task_ids, save_dir=args.save).format())
     if args.acceptance and corpus.cases:
         from .evaluation.acceptance_eval import evaluate_acceptance
 
@@ -344,6 +363,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save", type=Path, help="--extraction / --acceptance: store every evidence package, proposal and what the labeler expected in this folder (for --attribute and --from)")
     p.add_argument("--from", dest="from_dir", type=Path, help="--acceptance only: re-run validation on proposals saved with --save (no model calls)")
     p.add_argument("--attribute", type=Path, help="read the folder written by --save and say, for every miss, which stage caused it and whether it can be fixed (no model calls)")
+    p.add_argument("--records", action="store_true", help="measure records extraction (S09): record recall/precision, field accuracy, completeness")
+    p.add_argument("--tasks", help="--records only: only these task ids, comma separated")
+    p.add_argument("--attribute-records", type=Path, help="read the folder written by --records --save and say why each missing / extra / wrong record happened")
     p.add_argument("--qualify", action="store_true", help="--acceptance only: write a qualification record when the thresholds in acceptance.qualification are met")
     p.add_argument("--profile", help="retrieval profile(s) to evaluate, comma separated (e.g. light,standard,deep)")
     p.add_argument("--kinds", help="--extraction / --acceptance only: task kinds to score, comma separated (value,interpretation,records; default: all implemented)")

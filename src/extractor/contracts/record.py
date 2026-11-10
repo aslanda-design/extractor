@@ -14,6 +14,8 @@ class FieldResult(StrictModel):
 
 class Record(StrictModel):
     record_id: str  # stable, derived from source location
+    key: str = ""  # the identity as the document prints it ("(c)", "Stage 4", "4.1(iii)")
+    text: str = ""  # the source span the record was read from (what its fields were extracted from)
     block_ids: list[str] = []  # boundaries in the source view
     parent_id: str | None = None
     fields: list[FieldResult] = []

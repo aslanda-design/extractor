@@ -284,7 +284,8 @@ tr.dim td{color:var(--muted)}
       <button class="btn" id="corpusOverlap" title="Retrieval only: how much evidence the tasks of a case share (S05). The chat model is not used.">Measure evidence overlap</button>
       <button class="btn" id="corpusExtract">Measure value extraction</button>
       <label title="Runs the extraction measure twice on the same evidence: one call per task (off) and tasks that share evidence sharing a call (auto). Lists every task whose result changed."><input type="checkbox" id="corpusCompare"> compare grouping (off vs auto)</label>
-      <button class="btn" id="corpusAccept">Measure acceptance</button></div>
+      <button class="btn" id="corpusAccept">Measure acceptance</button>
+      <button class="btn" id="corpusRecords" title="Runs S09 on every records task: finds the records of the whole scope and extracts their fields (many model calls: slow).">Measure records</button></div>
     <div id="corpusResult" style="margin-top:12px"></div>
     <div id="corpusHistory" style="margin-top:18px"></div>
   </div>
@@ -494,7 +495,20 @@ function renderRun(r) {
         <td><code>${esc(x.task_id)}</code></td><td>${esc(x.kind)}</td><td>${pill(x.status, kind(x.status))}</td>
         <td>${x.kind === 'records' ? esc(x.records.length + ' record(s) · ' + x.completeness) : x.value != null ? esc(JSON.stringify(x.value)) : x.alternatives.length ? '<i>proposed:</i> ' + esc(x.alternatives.map(a => JSON.stringify(a)).join(' | ')) : '—'}</td>
         <td>${esc(x.diagnostics.join(' · '))}</td></tr>`).join('')}</tbody></table>
+      ${r.results.filter(x => x.kind === 'records').map(recordsDetail).join('')}
       <details style="margin-top:12px"><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+}
+function recordsDetail(x) {
+  const fieldIds = [...new Set(x.records.flatMap(rec => rec.fields.map(f => f.field_id)))];
+  const st = s => pill(s.replace(/_/g, ' '), {supported: 'ok', not_found: 'warn', uncertain: 'warn', failed: 'bad'}[s]);
+  return `<div class="card" style="margin-top:12px"><h2><code>${esc(x.task_id)}</code> · ${x.records.length} record(s) · completeness ${esc(x.completeness)} ${st(x.status)}</h2>
+    <p class="hint">Where the records were searched: ${esc(x.scope_note || 'n/a')}</p>
+    ${x.acceptance ? `<p>${x.acceptance.reasons.map(esc).join(' · ')}</p>` : ''}
+    ${x.validation.findings.length ? `<table><thead><tr><th>Audit finding</th><th></th><th>Message</th></tr></thead><tbody>${x.validation.findings.map(f => `<tr><td><code>${esc(f.category)}</code></td>
+      <td>${pill(f.severity === 'material' ? 'blocks' : 'info', f.severity === 'material' ? 'bad' : '')}</td><td><small>${esc(f.message)}</small></td></tr>`).join('')}</tbody></table>` : '<p class="hint">The audit found no gap.</p>'}
+    <table style="margin-top:8px"><thead><tr><th>Key</th>${fieldIds.map(id => `<th>${esc(id)}</th>`).join('')}<th>Record text (its only evidence)</th></tr></thead><tbody>${x.records.map(rec => `<tr>
+      <td><code>${esc(rec.key)}</code></td>${fieldIds.map(id => { const f = rec.fields.find(y => y.field_id === id); return f ? `<td>${st(f.status)}<br><small>${esc(f.value == null ? '' : typeof f.value === 'string' ? f.value : JSON.stringify(f.value))}</small></td>` : '<td></td>'; }).join('')}
+      <td><small>${esc((rec.text || '').slice(0, 220))}${(rec.text || '').length > 220 ? '…' : ''}</small></td></tr>`).join('')}</tbody></table></div>`;
 }
 function renderPlan(r) {
   const p = r.plan, byId = Object.fromEntries(r.tasks.map(t => [t.id, t]));
@@ -868,6 +882,19 @@ function causesBlock(c) {
       `<tr><td>${esc(o.case_id)}</td><td><code>${esc(o.task_id)}</code></td><td>${pill(o.cause.replace(/_/g, ' '), CAUSE_KIND[o.cause] || '')}</td>
        <td>${esc(typeof o.expected === 'string' ? o.expected : JSON.stringify(o.expected))}</td><td>${esc(typeof o.got === 'string' ? o.got : JSON.stringify(o.got))}</td><td><small>${esc(o.detail)}</small></td></tr>`).join('')}</tbody></table>`;
 }
+CORPUS_RENDER.records = r => {
+  const pct = v => v == null ? 'n/a' : Math.round(v * 100) + '%', t = r.totals;
+  const kind = {parse: 'bad', scope: 'bad', boundary: 'bad', false_record: 'bad', span: 'warn', field: 'warn'};
+  return `<p><b>${t.tasks}</b> task(s) · record recall <b>${pct(t.recall)}</b> (${t.matched}/${t.gold}) · precision <b>${pct(t.precision)}</b> (${t.matched}/${t.found}) ·
+      field exact ${pct(t.field_exact)} · near ${pct(t.field_near)} · ${t.supported} supported · ${Math.round(t.seconds)} s</p>
+    <table><thead><tr><th>Business id</th><th>Field id</th><th>Labeled</th><th>Found</th><th>Recall</th><th>Precision</th><th>Fields exact / near</th><th>Status</th><th>Completeness</th><th>Sec</th></tr></thead><tbody>${r.scores.map(s => `<tr>
+      <td>${esc(s.case_id)}</td><td><code>${esc(s.task_id)}</code></td><td>${s.gold}</td><td>${s.found}</td><td>${pct(s.recall)}</td><td>${pct(s.precision)}</td>
+      <td>${s.fields_total ? Math.round(100 * s.fields_exact / s.fields_total) + '% / ' + Math.round(100 * s.fields_near / s.fields_total) + '%' : 'n/a'}</td>
+      <td>${pill(s.status, {supported: 'ok', not_found: 'warn', uncertain: 'warn', failed: 'bad'}[s.status])}</td><td>${esc(s.completeness)}</td><td>${Math.round(s.seconds)}</td></tr>`).join('')}</tbody></table>
+    <p class="hint">Records are matched by content (best pairs first), not by order. A <b>miss</b> is a labeled record nobody matched; a <b>false</b> record is one the engine found that is not labeled. Saved in <code>${esc(r.saved_to)}</code>; read again offline with <code>eval --attribute-records</code>.</p>
+    ${r.causes.length ? `<h2 style="margin-top:14px">Why the problems happen (${r.causes.length})</h2><table><thead><tr><th>Business id</th><th>Field id</th><th>What</th><th>Stage</th><th>Can it be fixed?</th></tr></thead><tbody>${r.causes.map(c => `<tr>
+      <td>${esc(c.case_id)}</td><td><code>${esc(c.task_id)}</code></td><td><small>${esc(c.what)}</small></td><td>${pill(c.cause.replace(/_/g, ' '), kind[c.cause] || '')}</td><td><small>${esc(c.fixable)}</small></td></tr>`).join('')}</tbody></table>` : '<div class="msg ok">No problems to explain.</div>'}`;
+};
 CORPUS_RENDER.overlap = r => {
   const pct = v => Math.round(v * 100) + '%';
   return `<table><thead><tr><th>Business id</th><th>Tasks</th><th>Evidence tokens</th><th>Distinct tokens</th><th>Shareable</th><th>Pairs sharing</th><th>…≥ 80% inside</th><th>…≥ 50% inside</th></tr></thead><tbody>${r.rows.map(x => `<tr>
@@ -937,6 +964,14 @@ $('#corpusAccept').onclick = e => {
   }
   const tags = $('#corpusSplit') && $('#corpusSplit').value ? [$('#corpusSplit').value] : [];
   runCorpusMeasure(e, 'acceptance', 'Measuring (extraction + validation on every value task)…', {kinds, tags, cases});
+};
+$('#corpusRecords').onclick = e => {
+  const cases = [...document.querySelectorAll('#corpusCases input[name=case]:checked')].map(x => x.value);
+  if (document.querySelector('#corpusCases input[name=case]') && !cases.length) {
+    $('#corpusResult').innerHTML = '<div class="msg bad">select at least one extraction project to test</div>'; return;
+  }
+  const tags = $('#corpusSplit') && $('#corpusSplit').value ? [$('#corpusSplit').value] : [];
+  runCorpusMeasure(e, 'records', 'Measuring (finds every record of the scope and extracts its fields: slow)…', {tags, cases});
 };
 $('#corpusExtract').onclick = e => {
   const kinds = [...document.querySelectorAll('#corpusFilters input[name=kind]:checked')].map(x => x.value);
@@ -1182,7 +1217,7 @@ function showProposal(r) {
 }
 
 /* ---------- logs (engine events, polled) ---------- */
-const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S05: 'plan', S06: 'retrieve', S07: 'extract', S08: 'interpret', S10: 'validate', S11: 'accept', S13: 'result', eval: 'evaluate', ui: 'queue'};
+const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S05: 'plan', S06: 'retrieve', S07: 'extract', S08: 'interpret', S09: 'records', S10: 'validate', S11: 'accept', S13: 'result', eval: 'evaluate', ui: 'queue'};
 const RUNS = new Map();   // run id -> {id,title,start,end,failed,events:[],progress:{},open:{},stages:{}}
 let logSeq = 0, lastRunId = null;
 const openRuns = new Set();

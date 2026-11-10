@@ -23,6 +23,7 @@ KINDS = {
     "corpus.indexing": "Corpus · chunking",
     "corpus.extraction": "Corpus · extraction",
     "corpus.acceptance": "Corpus · acceptance",
+    "corpus.records": "Corpus · records",
 }
 
 
@@ -50,6 +51,9 @@ def subject(kind: str, params: dict) -> str:
     if kind == "corpus.overlap":
         cases = params.get("cases") or []
         return f"{len(cases) if cases else 'all'} project(s)"
+    if kind == "corpus.records":
+        cases = params.get("cases") or []
+        return f"{len(cases) if cases else 'all'} project(s) · records"
     if kind in ("corpus.extraction", "corpus.acceptance"):
         cases = params.get("cases") or []
         kinds = params.get("kinds") or ["value"]
@@ -95,6 +99,10 @@ def headline(kind: str, result: dict | None) -> str:
             return f"quote recall {_pct(r['quote_recall'])}, right page {_pct(r['page_accuracy'])}"
         if kind == "corpus.indexing":
             return f"quotes in one passage {_pct(r['containment'])}"
+        if kind == "corpus.records":
+            t = r["totals"]
+            return (f"{t['tasks']} task(s): record recall {_pct(t['recall'])}, precision {_pct(t['precision'])}, "
+                    f"field exact {_pct(t['field_exact'])}, {t['supported']} supported")
         if kind == "corpus.acceptance":
             row = (r.get("rows") or [None])[0]
             if not row:

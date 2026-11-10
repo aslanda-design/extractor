@@ -45,3 +45,5 @@ Workspace (default `.extractor_artifacts/workspace/`): `uploads/`, `specs/`, `re
 `runtime.yaml`. Caches and OCR models are shared with the command line.
 
 Phase 7 (interpretation): the Extraction tab has a Kind selector (value / interpretation) and decision criteria; the result shows the S08 decision card; Settings has the interpretation model and knobs; the Corpus extraction measure includes interpretation tasks and shows why each miss happens (error attribution).
+
+Phase 8 (records): the Run tab shows each records task with its audit, scope and record table; the Corpus tab has "Measure records" (recall, precision, field accuracy, completeness, causes).

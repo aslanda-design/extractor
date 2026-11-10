@@ -227,6 +227,23 @@ class InterpretationSettings(StrictModel):
     unresolved_attachments_block_absence: bool = False
 
 
+class RecordSettings(StrictModel):
+    """S09 knobs: how repeated records are found. The fields of each record use `extraction:` / `interpretation:`."""
+
+    scope_with_model: bool = True  # a model reads the document OUTLINE and names the region; the engine checks it (False = whole document)
+    scope_min_windows: int = Field(default=3, ge=1)  # ...but only for documents that need at least this many discovery windows; smaller ones are read whole (a wrong region is the worst error, and a small document is cheap to read)
+    scope_margin_blocks: int = Field(default=1, ge=0)  # blocks added on each side of the region the model names
+    outline_chars_per_block: int = Field(default=70, ge=20)
+    window_overlap_blocks: int = Field(default=2, ge=0)  # blocks repeated at the start of the next discovery window
+    max_records_per_window: int = Field(default=60, ge=1)  # upper bound of records per answer (the model's output limit usually allows fewer); a full answer is followed by another call
+    retries: int = Field(default=1, ge=0)
+    prompt_margin: float = Field(default=0.1, ge=0.0, lt=0.9)
+    think_discovery: bool | None = False  # listing boundaries is reading, not deciding: thinking only adds time
+    verify_discovery: bool = False  # one call that drops listed entries that do not match the record definition. Off: on the corpus an 8B model rejected 75 entries, real definitions included (recall matters more than this filter)
+    verify_fields: bool = False  # S07 candidate verification for the fields of each record (they already read only their own record: off saves 2 of 3 calls)
+    check_numbering: bool = True  # (a) (b) (d) -> a record is missing
+
+
 BUILTIN_INTERPRETATION_PROFILES: dict[str, dict] = {"light": {"think": False, "think_judge": False}, "deep": {"think": True, "think_judge": True}}
 
 
@@ -269,6 +286,7 @@ class RuntimeConfig(StrictModel):
     acceptance: AcceptanceSettings = AcceptanceSettings()
     extraction_profiles: dict[str, dict] = {}  # profile name -> ExtractionSettings fields to change at that depth
     interpretation: InterpretationSettings = InterpretationSettings()
+    records: RecordSettings = RecordSettings()
     interpretation_profiles: dict[str, dict] = {}  # profile name -> InterpretationSettings fields to change at that depth
     storage: StorageConfig = StorageConfig()
 
@@ -276,7 +294,7 @@ class RuntimeConfig(StrictModel):
         """Identity of the settings that can change results (storage path excluded)."""
         return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking,
                            self.retrieval.resolve(), self.extraction, self.planning, self.extraction_profiles, self.acceptance,
-                           self.interpretation, self.interpretation_profiles)
+                           self.interpretation, self.interpretation_profiles, self.records)
 
     def extraction_for(self, profile: str | None = None) -> ExtractionSettings:
         """S07 settings at the given depth: the base `extraction:` block, the built-in profile of that name, then yours."""

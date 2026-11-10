@@ -43,6 +43,12 @@ class CorpusExtractBody(BaseModel):
     groupings: list[str] = []  # extraction only: S05 grouping settings to compare (e.g. ["off", "auto"]; empty = the one in Settings)
 
 
+class CorpusRecordsBody(BaseModel):
+    tags: list[str] = []
+    cases: list[str] = []
+    tasks: list[str] = []  # only these records tasks (empty = all)
+
+
 class PlanBody(BaseModel):
     spec: str
     documents: list[str]
@@ -212,6 +218,10 @@ def create_app(workspace_dir: Path) -> FastAPI:
     @app.post("/api/corpus/acceptance")
     def corpus_acceptance(body: CorpusExtractBody):
         return ws.corpus_acceptance(body.kinds, body.tags, body.cases, body.qualify)
+
+    @app.post("/api/corpus/records")
+    def corpus_records(body: CorpusRecordsBody):
+        return ws.corpus_records(body.tags, body.cases, body.tasks)
 
     @app.post("/api/corpus/parsing")
     def corpus_parsing():

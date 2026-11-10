@@ -16,7 +16,7 @@ owns that stage; steps marked STUB are not built yet and report `failed`.
         for each task, in dependency order -> process_task
             S07  conclude: from the answer to one proposal    extraction/     value_pipeline.py (conclude_task)
             S08  interpret: decide a label under criteria     interpretation/ interpretation_pipeline.py
-            S09  discover records                             STUB (phase 8)
+            S09  discover records, extract their fields        records/ records_pipeline.py
             S10  validate                                     validation/     validation_pipeline.py
             S11  accept                                       validation/     (same file: policy.py)
             S12  recover (retry what failed)                  STUB (phase 9)
@@ -37,7 +37,7 @@ from ..artifacts import ArtifactStore
 from ..config import RuntimeConfig
 from ..config.runtime import RetrievalSettings
 from ..contracts import CompiledSpecification, DocumentManifest, TaskResult, TaskStatus
-from ..contracts.common import Completeness, EvidenceRole, TaskKind
+from ..contracts.common import Completeness, EvidenceRole, SourceRef, TaskKind
 from ..contracts.coverage import CoverageLedger
 from ..contracts.candidate import ProposalOutcome, ValueProposal
 from ..contracts.evidence import EvidencePackage
@@ -49,7 +49,9 @@ from ..contracts.task import OnAbsent, TaskSpecification
 from ..events import emit, progress
 from ..extraction import Asked, ask_batch, ask_task, conclude_task
 from ..interpretation.interpretation_pipeline import interpret_task
+from ..records.records_pipeline import extract_records
 from ..validation import Validated, validate_and_accept
+from ..validation.records import decide_records
 from ..validation.qualification import is_qualified, qualification_key
 from ..retrieval.queries import build_queries
 from ..indexing.builder import IndexBuilder
@@ -230,7 +232,11 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
         notes.append(f"evidence ({ctx.profile}): {len(package.passages)} passage(s), "
                      f"{package.trace.used_tokens}/{package.trace.budget_tokens} tokens, {len(package.gaps)} gap(s)")
 
-    # S07 / S08. Extract a value (value tasks) or decide a label under criteria (interpretation tasks). S09 records: phase 8.
+    # S09. Records: the whole scope is read (no retrieval), then S10/S11 decide the collection.
+    if task.kind == TaskKind.RECORDS and ctx.indexed is not None:
+        return _process_records(task, ctx, document_ids, notes)
+
+    # S07 / S08. Extract a value (value tasks) or decide a label under criteria (interpretation tasks).
     status, value, alternatives, evidence, validation, acceptance = TaskStatus.FAILED, None, [], [], ValidationReport(), None
     if task.id in ctx.evidence and task.kind in (TaskKind.VALUE, TaskKind.INTERPRETATION):
         scope_docs = [ctx.indexed[d] for d in document_ids if d in ctx.indexed]
@@ -263,7 +269,7 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
         notes += [f"{status.value}: {why}" for why in validated.decision.reasons[:3]]
         notes += [f"info: {f.message}" for f in validated.report.findings if f.severity.value == "info"][:5]
     else:
-        notes.append("extraction stage S09 (records) is not implemented yet" if task.kind == TaskKind.RECORDS
+        notes.append("records need indexed documents (S04)" if task.kind == TaskKind.RECORDS
                      else "no evidence was gathered, so nothing could be extracted")
 
     # S12. Recover: retry the affected stage with a concrete improvement.     STUB (phase 9)
@@ -276,6 +282,21 @@ def process_task(task: TaskSpecification, ctx: RunContext) -> TaskResult:
         interpretation=ctx.proposals[task.id].interpretation if task.id in ctx.proposals else None,
         completeness=Completeness.UNKNOWN if task.kind == TaskKind.RECORDS else None,
         validation=validation, acceptance=acceptance, diagnostics=notes, execution=ctx.execution)
+
+
+def _process_records(task: TaskSpecification, ctx: RunContext, document_ids: list[str], notes: list[str]) -> TaskResult:
+    """S09 + S10/S11 for one records task."""
+    docs = [ctx.indexed[d] for d in document_ids if d in ctx.indexed]
+    outcome = extract_records(task, docs, ctx.adapters, ctx.config, ctx.profile,
+                              scorer=(lambda q, texts: ctx.tools.reranker.score(q, texts)) if ctx.tools else None, ledger=ctx.ledger)
+    report, decision, completeness = decide_records(task, outcome, ctx.config.acceptance)
+    if decision.status == TaskStatus.SUPPORTED:
+        ctx.accepted.add(task.id)
+    notes += [*outcome.log, f"{decision.status.value}: {decision.reasons[0] if decision.reasons else ''}"]
+    return TaskResult(
+        task_id=task.id, kind=task.kind, status=decision.status, records=[r.record for r in outcome.records], completeness=completeness,
+        evidence=[EvidenceLink(ref=SourceRef(document_id=b.rsplit(":p", 1)[0], block_id=b), role=EvidenceRole.SUPPORTS) for r in outcome.records for b in r.record.block_ids[:1]],
+        validation=report, acceptance=decision, diagnostics=notes, scope_note=" | ".join(outcome.scopes), execution=ctx.execution)
 
 
 def _result_parts(proposal: ValueProposal, validated: Validated):

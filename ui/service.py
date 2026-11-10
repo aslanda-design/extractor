@@ -37,6 +37,7 @@ from extractor.contracts.task import LabelSpec
 from extractor.evaluation import CorpusError, load_corpus
 from extractor.evaluation.acceptance_eval import evaluate_acceptance
 from extractor.evaluation.attribution import FIXABLE, attribute
+from extractor.evaluation.records_eval import attribute_records, evaluate_records
 from extractor.evaluation.extraction_eval import IMPLEMENTED_KINDS, evaluate_extraction
 from extractor.interpretation.interpretation_pipeline import interpret_task
 from extractor.evaluation.indexing_eval import evaluate_indexing
@@ -701,6 +702,25 @@ class Workspace:
         rows = [{**r.model_dump(mode="json"), "automation_rate": r.automation_rate, "accepted_precision": r.accepted_precision,
                  "false_accept_rate": r.false_accept_rate, "false_absence_rate": r.false_absence_rate} for r in report.rows]
         return {"rows": rows, "misses": [o.model_dump(mode="json") for o in report.outcomes if o.outcome not in ("accepted_correct", "correct_absence", "correct_uncertain")]}
+
+    @recorded("corpus.records")
+    def corpus_records(self, tags: list[str] | None = None, cases: list[str] | None = None, tasks: list[str] | None = None) -> dict:
+        """S09 measure: record recall / precision, field accuracy, completeness, and why each miss happened."""
+        corpus = load_corpus(CORPUS_DIR)
+        if not corpus.cases:
+            raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
+        config = self.get_config()
+        with self._job("Measure records extraction"):
+            _, adapters = self._builder(config)
+            saved = self.store.root / "evals" / time.strftime("records-%Y%m%d-%H%M%S")
+            try:
+                report = evaluate_records(corpus, config, adapters, self.store, [config.retrieval.profile], tags or None, cases or None,
+                                          tasks or None, save_dir=saved)
+            except ValueError as exc:
+                raise UiError(str(exc))
+        return {"scores": [{**s.model_dump(mode="json"), "recall": s.recall, "precision": s.precision} for s in report.scores],
+                "totals": report.totals(), "saved_to": str(saved),
+                "causes": [c.model_dump(mode="json") for c in attribute_records(saved)]}
 
     @recorded("corpus.parsing")
     def corpus_parsing(self) -> dict:

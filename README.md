@@ -238,6 +238,7 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `planning/` | S05 | **`planning_pipeline.py` is the whole planning stage in one readable file**: after retrieval and before any model call, it measures how much evidence the value tasks share (`overlap.py`) and, with `planning.grouping: auto`, decides which tasks are answered by the same model call (`grouping.py`; `extraction/capacity.py` says what one call can hold). | Planning behaviour: `planning_pipeline.py` and `grouping.py`; limits: `planning:` in the runtime config |
 | `retrieval/` | S06 | **`retrieval_pipeline.py` is the whole evidence-retrieval pipeline in one readable file** (queries -> candidates -> fusion -> rerank -> selection -> expansion -> packaging). Helpers: `queries.py`, `candidates.py`, `fusion.py`, `rerank.py`, `selection.py`, `definitions.py`, `expansion.py`, `packaging.py`; `report.py` prints a run's trace. | Retrieval behaviour: `retrieval_pipeline.py` and its helper; depth: `retrieval.profile(s)` in the runtime config |
 | `extraction/` | S07 | **`value_pipeline.py` is the whole value-extraction pipeline in one readable file** (tag passages -> split by context -> ask the model -> read candidates and locate their quotes -> normalize -> derive -> reconcile -> conclude). Helpers: `prompts.py` (what the model is told), `schema.py` (JSON schema it must follow), `partition.py`, `reading.py`, `quotes.py`, `normalize.py` (dates, numbers, amounts by code), `derivation.py` (arithmetic by code, only when the task allows), `reconcile.py`, `choosing.py` (precedence rules), `calling.py`, `report.py` | Behaviour: `value_pipeline.py` and its helper; wording: `prompts.py`; model: `models.extraction` in the runtime config |
+| `records/` | S09 | **`records_pipeline.py` is the whole records stage in one readable file** (scope -> discover boundaries window by window -> exact positions -> identity -> fields per record -> reconcile -> audit). Helpers: `scope.py`, `discovery.py`, `spans.py`, `fields.py`, `audit.py`, `outline.py`, `prompts.py`, `schema.py` | Behaviour: `records_pipeline.py` and its helper; boundaries: the YAML `record.identity` / `record.boundaries`; knobs: `records:` |
 | `interpretation/` | S08 | **`interpretation_pipeline.py` is the whole interpretation stage in one readable file** (frame -> evidence -> ask -> read quotes -> check by code -> judge -> conclude). Helpers: `prompts.py`, `schema.py`, `reading.py`, `checks.py`, `judging.py`, `tools.py` (exact calculations the engine runs for the model; MCP-shaped definitions) | Behaviour: `interpretation_pipeline.py` and its helper; wording: `prompts.py`; model: `models.interpretation`; knobs: `interpretation:` |
 | `validation/` | S10, S11 | **`validation_pipeline.py` is the whole validation and acceptance stage in one readable file** (structure -> grounding -> normalization -> consistency -> coverage / risk register -> optional semantic check -> qualification -> policy -> decision). Helpers: `structure.py`, `grounding.py`, `numeric.py`, `consistency.py`, `coverage_check.py`, `semantic.py`, `policy.py` (profiles), `qualification.py`, `findings.py` | Behaviour: `validation_pipeline.py` and the layer it calls; which findings block: `policy.py` or `acceptance:` in the runtime config |
 | `pipeline/` | all | **`extraction_pipeline.py` is the whole engine in one readable file**: S01-S13 as numbered calls, real or marked STUB. Each phase turns its STUB line into a call. | `extraction_pipeline.py` |
@@ -366,6 +367,23 @@ the finding `quote_relocated` is recorded (information for `standard`, blocking 
 Retrieval scores and model confidence are never used to accept: on the labeled corpus neither separated right answers from
 wrong ones. `python -m extractor eval --acceptance` reports automation rate, accepted-answer precision, false accepts,
 false absences and the blocking findings; `--save` / `--from` make tuning a profile a matter of seconds.
+
+### How records extraction works (S09)
+
+A records task asks for EVERY occurrence of something inside a bounded scope (all clauses, all milestones, all defined terms). Top-k retrieval cannot do that,
+because a missed record is invisible, so the whole scope is read. Open `src/extractor/records/records_pipeline.py`: `extract_records` is seven numbered steps.
+
+1. **Scope:** small documents are read entirely; for large ones a model names the region from the document outline and the engine checks it (fallback: the whole document, reported).
+2. **Discover:** the scope is read window by window; the model lists each record as (key, start block, its first words, end block). It never returns the text.
+3. **Positions:** the engine finds the first words inside the named block (several records can share a block); a record ends where the next one starts, even across a page.
+4. **Identity:** the key as printed; the record id derives from the source position.
+5. **Fields:** each record's own text is the ONLY evidence of its fields (one grouped call for the value fields, S08 for label fields); every field goes through S10/S11.
+6. **Reconcile:** a record seen in two windows is one record; the same key in two places is a `duplicate_key`.
+7. **Audit:** numbering gaps ((a) (b) (d)), numbered text of the same family that no record covers, failed or truncated windows, parsing problems in the scope. Only then is the collection `complete`.
+
+`supported` needs completeness `checked` AND every required field of every record accepted; otherwise `uncertain`, and the records read so far stay in the result with a status per field.
+Write `record.identity` and `record.boundaries` in the YAML as precisely as you can ("Start at each (i)-(xi) under 4.1; stop before the next same-level item; exclude printed page numbers"): the model reads them.
+`eval --records --save DIR` measures it; `eval --attribute-records DIR` says why each missing, extra or wrong record happened. **To do:** nested records (`record.parent`).
 
 ### How interpretation works (S08)
 

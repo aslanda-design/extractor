@@ -57,6 +57,18 @@ class Category(StrEnum):
     MODEL_CALL_FAILED = "model_call_failed"
     UNRESOLVED_REFERENCE = "unresolved_reference"  # "see Section 9" inside the document that was not found
     UNRESOLVED_ATTACHMENT = "unresolved_attachment"  # Schedule / Exhibit not among the supplied files
+    # record collections (S09)
+    NUMBERING_GAP = "numbering_gap"  # (a) (b) (d): a member of a numbered sequence is missing
+    POSSIBLE_MISSED_RECORD = "possible_missed_record"  # numbered text inside the scope that no record covers
+    OUTPUT_TRUNCATED = "output_truncated"  # the model filled its answer limit: more records may exist
+    DISCOVERY_FAILED = "discovery_failed"  # a discovery call failed: part of the scope was never read
+    DUPLICATE_KEY = "duplicate_key"  # the same identity found twice in different places
+    PARSE_ISSUE_IN_SCOPE = "parse_issue_in_scope"  # unresolved parsing problem on a page of the scope
+    SCOPE_FALLBACK = "scope_fallback"  # the region could not be located, the whole document was searched (info)
+    BOUNDARY_NOT_LOCATED = "boundary_not_located"  # a record start could not be found in its block (info)
+    RECORD_FIELD_NOT_ACCEPTED = "record_field_not_accepted"  # a required field of a record was not accepted
+    RECORD_REJECTED = "record_rejected"  # listed by discovery, then removed because it does not match the record definition (info)
+    NO_RECORDS = "no_records"  # nothing found: only an empty answer if the audit was complete
     # semantic
     SEMANTIC_UNSUPPORTED = "semantic_unsupported"
     SEMANTIC_CHECK_FAILED = "semantic_check_failed"
