@@ -1,0 +1,28 @@
+{
+  "name": "frontend",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "node scripts/dev.mjs",
+    "lint": "turbo lint",
+    "format": "turbo format",
+    "typecheck": "turbo typecheck",
+    "dev:web": "turbo dev"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "shadcn": "^4.23.0",
+    "turbo": "^2.11.10",
+    "typescript": "~6.0.2"
+  },
+  "packageManager": "npm@11.8.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

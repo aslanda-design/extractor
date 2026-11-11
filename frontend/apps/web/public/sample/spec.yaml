@@ -1,0 +1,39 @@
+version: 1
+name: sample service agreement
+tasks:
+- id: agreement_date
+  kind: value
+  description: The date on which the agreement is entered into.
+  output: {type: date, format: ISO-8601}
+  rules:
+    normalization: Convert to YYYY-MM-DD.
+    on_absent: not_found
+- id: sow_approval
+  kind: interpretation
+  description: Whether the Client approved the Statement of Work.
+  output:
+    labels:
+    - {name: approved, meaning: Approval is granted without conditions.}
+    - {name: conditional, meaning: Approval is granted subject to stated conditions.}
+    - {name: rejected, meaning: Approval is explicitly refused.}
+    - {name: pending, meaning: The decision is explicitly still open.}
+  rules:
+    decision_criteria:
+    - Never drop a condition when approval is conditional.
+- id: obligations
+  kind: records
+  description: Every obligation a party commits to in the agreement.
+  record:
+    identity: One numbered obligation.
+    boundaries: An obligation starts at its number and ends before the next number or heading.
+    fields:
+    - id: party
+      kind: value
+      description: The party that carries the obligation (Provider or Client).
+- id: liability_cap
+  kind: value
+  description: The maximum total liability amount the agreement states, as a number.
+  output: {type: number}
+  rules:
+    normalization: Return the number only, without currency symbol.
+    on_absent: not_found

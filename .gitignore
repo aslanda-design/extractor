@@ -63,3 +63,14 @@ node_modules/
 PROGRESS.md
 tests/
 docs/
+
+# --- Frontend (frontend/): the review app lives in this repo; its own .gitignore covers node_modules, build output and local tooling
+frontend/node_modules/
+frontend/**/node_modules/
+frontend/.turbo/
+frontend/**/dist/
+frontend/.claude/
+frontend/.impeccable/
+frontend/.mcp.json
+# the sample the app ships with (a fictional agreement and the saved output of a run on it) IS part of the app
+!frontend/apps/web/public/sample/*

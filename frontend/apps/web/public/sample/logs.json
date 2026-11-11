@@ -1,0 +1,2304 @@
+[
+ {
+  "seq": 1,
+  "time": 1794348440.4270108,
+  "level": "info",
+  "stage": "run",
+  "message": "Parse service-agreement.pdf",
+  "run": "r14c4c76b3b1",
+  "kind": "run_start",
+  "data": {}
+ },
+ {
+  "seq": 2,
+  "time": 1794348440.4424124,
+  "level": "info",
+  "stage": "S03",
+  "message": "loading the parsing models for service-agreement.pdf",
+  "run": "r14c4c76b3b1",
+  "kind": "start",
+  "data": {}
+ },
+ {
+  "seq": 3,
+  "time": 1794348440.445451,
+  "level": "ok",
+  "stage": "S03",
+  "message": "loading the parsing models for service-agreement.pdf done in 0.0s",
+  "run": "r14c4c76b3b1",
+  "kind": "end",
+  "data": {
+   "seconds": 0.0
+  }
+ },
+ {
+  "seq": 4,
+  "time": 1794348440.445459,
+  "level": "info",
+  "stage": "S03",
+  "message": "parsing service-agreement.pdf",
+  "run": "r14c4c76b3b1",
+  "kind": "start",
+  "data": {}
+ },
+ {
+  "seq": 5,
+  "time": 1794348440.445467,
+  "level": "info",
+  "stage": "S03",
+  "message": "reading the native text layer of service-agreement.pdf",
+  "run": "r14c4c76b3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 6,
+  "time": 1794348441.4572766,
+  "level": "info",
+  "stage": "S03",
+  "message": "service-agreement.pdf: 1 page(s)",
+  "run": "r14c4c76b3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 7,
+  "time": 1794348441.4703496,
+  "level": "info",
+  "stage": "S03",
+  "message": "page 1: layout parse covers 100% of the text layer (274/274 words)",
+  "run": "r14c4c76b3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 8,
+  "time": 1794348441.4712548,
+  "level": "info",
+  "stage": "S03",
+  "message": "pages parsed 1/1",
+  "run": "r14c4c76b3b1",
+  "kind": "progress",
+  "data": {
+   "done": 1,
+   "total": 1
+  }
+ },
+ {
+  "seq": 9,
+  "time": 1794348441.471261,
+  "level": "info",
+  "stage": "S03",
+  "message": "page 1/1: native (usable native text layer); 14 block(s), 0 table(s)",
+  "run": "r14c4c76b3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 10,
+  "time": 1794348441.4712715,
+  "level": "info",
+  "stage": "S03",
+  "message": "parsing finished: 14 block(s), 0 table(s), 0 page(s) via OCR, 0 word(s) restored from the text layer, 0 unresolved issue(s)",
+  "run": "r14c4c76b3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 11,
+  "time": 1794348441.4712992,
+  "level": "ok",
+  "stage": "S03",
+  "message": "parsing service-agreement.pdf done in 1.0s",
+  "run": "r14c4c76b3b1",
+  "kind": "end",
+  "data": {
+   "seconds": 1.03
+  }
+ },
+ {
+  "seq": 12,
+  "time": 1794348441.5178175,
+  "level": "ok",
+  "stage": "run",
+  "message": "Parse service-agreement.pdf finished in 1.1s",
+  "run": "r14c4c76b3b1",
+  "kind": "run_end",
+  "data": {
+   "seconds": 1.09
+  }
+ },
+ {
+  "seq": 13,
+  "time": 1794348441.546156,
+  "level": "info",
+  "stage": "run",
+  "message": "Run sample.yaml on 1 document(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "run_start",
+  "data": {}
+ },
+ {
+  "seq": 14,
+  "time": 1794348441.5561368,
+  "level": "info",
+  "stage": "S04",
+  "message": "indexing service-agreement.pdf",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 15,
+  "time": 1794348441.5642679,
+  "level": "ok",
+  "stage": "S03",
+  "message": "service-agreement.pdf: parsed earlier, reusing the cache (1 page(s))",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 16,
+  "time": 1794348441.5642755,
+  "level": "info",
+  "stage": "S04",
+  "message": "chunking service-agreement.pdf",
+  "run": "r14c4cbca3b1",
+  "kind": "start",
+  "data": {}
+ },
+ {
+  "seq": 17,
+  "time": 1794348478.4344263,
+  "level": "ok",
+  "stage": "S04",
+  "message": "chunking service-agreement.pdf done in 36.9s (passages=2, continuations=0, references=4)",
+  "run": "r14c4cbca3b1",
+  "kind": "end",
+  "data": {
+   "passages": 2,
+   "continuations": 0,
+   "references": 4,
+   "seconds": 36.87
+  }
+ },
+ {
+  "seq": 18,
+  "time": 1794348478.4398468,
+  "level": "info",
+  "stage": "S04",
+  "message": "building the lexical index",
+  "run": "r14c4cbca3b1",
+  "kind": "start",
+  "data": {}
+ },
+ {
+  "seq": 19,
+  "time": 1794348478.4560323,
+  "level": "ok",
+  "stage": "S04",
+  "message": "building the lexical index done in 0.0s",
+  "run": "r14c4cbca3b1",
+  "kind": "end",
+  "data": {
+   "seconds": 0.02
+  }
+ },
+ {
+  "seq": 20,
+  "time": 1794348478.457323,
+  "level": "info",
+  "stage": "S04",
+  "message": "embedding 2 passage(s) in 1 batch(es) with sentence_transformers:Qwen/Qwen3-Embedding-0.6B@st-6.2.0",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 21,
+  "time": 1794348479.045259,
+  "level": "info",
+  "stage": "S04",
+  "message": "embedding batches 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 1,
+   "total": 1
+  }
+ },
+ {
+  "seq": 22,
+  "time": 1794348479.048337,
+  "level": "info",
+  "stage": "S04",
+  "message": "building the vector index",
+  "run": "r14c4cbca3b1",
+  "kind": "start",
+  "data": {}
+ },
+ {
+  "seq": 23,
+  "time": 1794348479.0499406,
+  "level": "ok",
+  "stage": "S04",
+  "message": "building the vector index done in 0.0s",
+  "run": "r14c4cbca3b1",
+  "kind": "end",
+  "data": {
+   "seconds": 0.0
+  }
+ },
+ {
+  "seq": 24,
+  "time": 1794348479.049966,
+  "level": "ok",
+  "stage": "S04",
+  "message": "service-agreement.pdf: ready, 2 passage(s) searchable",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 25,
+  "time": 1794348479.0556207,
+  "level": "info",
+  "stage": "S06",
+  "message": "retrieving evidence for 'agreement_date' (standard profile): 2 passage(s) in scope",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 26,
+  "time": 1794348479.257841,
+  "level": "info",
+  "stage": "S06",
+  "message": "candidates: lexical 2, vector 2, structural 2, qualifier 2",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 27,
+  "time": 1794348479.2579482,
+  "level": "info",
+  "stage": "S06",
+  "message": "fused into 2 distinct passage(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 28,
+  "time": 1794348483.390584,
+  "level": "info",
+  "stage": "S06",
+  "message": "reranked 2 passage(s) (short document: all passages); best score 0.795",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 29,
+  "time": 1794348483.390633,
+  "level": "info",
+  "stage": "S06",
+  "message": "selected 1 primary passage(s), 0 qualifier slot(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 30,
+  "time": 1794348483.4675663,
+  "level": "warn",
+  "stage": "S06",
+  "message": "agreement_date: evidence ready, 2 passage(s), 366/4000 tokens, 1 gap(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 31,
+  "time": 1794348483.4675832,
+  "level": "info",
+  "stage": "S06",
+  "message": "tasks have their evidence 1/3",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 1,
+   "total": 3
+  }
+ },
+ {
+  "seq": 32,
+  "time": 1794348483.4676442,
+  "level": "info",
+  "stage": "S06",
+  "message": "retrieving evidence for 'sow_approval' (standard profile): 2 passage(s) in scope",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 33,
+  "time": 1794348483.7784867,
+  "level": "info",
+  "stage": "S06",
+  "message": "candidates: lexical 1, lexical#2 1, lexical#3 1, lexical#4 1, vector 2, vector#2 2, vector#3 2, vector#4 2, vector#5 2, qualifier 2",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 34,
+  "time": 1794348483.7785404,
+  "level": "info",
+  "stage": "S06",
+  "message": "fused into 2 distinct passage(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 35,
+  "time": 1794348483.9659345,
+  "level": "info",
+  "stage": "S06",
+  "message": "reranked 2 passage(s) (short document: all passages); best score 0.996",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 36,
+  "time": 1794348483.965975,
+  "level": "info",
+  "stage": "S06",
+  "message": "selected 1 primary passage(s), 0 qualifier slot(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 37,
+  "time": 1794348484.015588,
+  "level": "warn",
+  "stage": "S06",
+  "message": "sow_approval: evidence ready, 2 passage(s), 366/4000 tokens, 1 gap(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 38,
+  "time": 1794348484.015606,
+  "level": "info",
+  "stage": "S06",
+  "message": "tasks have their evidence 2/3",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 2,
+   "total": 3
+  }
+ },
+ {
+  "seq": 39,
+  "time": 1794348484.01565,
+  "level": "info",
+  "stage": "S06",
+  "message": "retrieving evidence for 'liability_cap' (standard profile): 2 passage(s) in scope",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 40,
+  "time": 1794348484.0796354,
+  "level": "info",
+  "stage": "S06",
+  "message": "candidates: lexical 2, vector 2, structural 2, qualifier 2",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 41,
+  "time": 1794348484.0796678,
+  "level": "info",
+  "stage": "S06",
+  "message": "fused into 2 distinct passage(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 42,
+  "time": 1794348484.2460098,
+  "level": "info",
+  "stage": "S06",
+  "message": "reranked 2 passage(s) (short document: all passages); best score 0.032",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 43,
+  "time": 1794348484.246038,
+  "level": "info",
+  "stage": "S06",
+  "message": "selected 1 primary passage(s), 0 qualifier slot(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 44,
+  "time": 1794348484.297517,
+  "level": "warn",
+  "stage": "S06",
+  "message": "liability_cap: evidence ready, 2 passage(s), 366/4000 tokens, 1 gap(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 45,
+  "time": 1794348484.2975338,
+  "level": "info",
+  "stage": "S06",
+  "message": "tasks have their evidence 3/3",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 3,
+   "total": 3
+  }
+ },
+ {
+  "seq": 46,
+  "time": 1794348484.2975879,
+  "level": "info",
+  "stage": "S05",
+  "message": "2 task(s) read 732 evidence tokens in total, 366 of them distinct (1 pair(s) of tasks share passages)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 47,
+  "time": 1794348484.297594,
+  "level": "debug",
+  "stage": "S05",
+  "message": "agreement_date / liability_cap: 2 shared passage(s), 100% of the smaller evidence",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 48,
+  "time": 1794348484.2976186,
+  "level": "debug",
+  "stage": "S05",
+  "message": "agreement_date is asked alone: grouping is off (planning.grouping)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 49,
+  "time": 1794348484.2976208,
+  "level": "debug",
+  "stage": "S05",
+  "message": "liability_cap is asked alone: grouping is off (planning.grouping)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 50,
+  "time": 1794348484.2976227,
+  "level": "info",
+  "stage": "S05",
+  "message": "2 task(s) will be asked in 2 extraction call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 51,
+  "time": 1794348484.2978094,
+  "level": "info",
+  "stage": "S07",
+  "message": "agreement_date: 2 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 52,
+  "time": 1794348484.298341,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 53,
+  "time": 1794348514.4361718,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 54,
+  "time": 1794348514.4390867,
+  "level": "info",
+  "stage": "S07",
+  "message": "agreement_date: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 55,
+  "time": 1794348514.4391117,
+  "level": "info",
+  "stage": "S07",
+  "message": "extraction calls done 1/2",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 1,
+   "total": 2
+  }
+ },
+ {
+  "seq": 56,
+  "time": 1794348514.4393575,
+  "level": "info",
+  "stage": "S07",
+  "message": "liability_cap: 2 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 57,
+  "time": 1794348514.439628,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 58,
+  "time": 1794348517.0489063,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 59,
+  "time": 1794348517.0517015,
+  "level": "info",
+  "stage": "S07",
+  "message": "liability_cap: the model reported 0 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 60,
+  "time": 1794348517.0517218,
+  "level": "info",
+  "stage": "S07",
+  "message": "extraction calls done 2/2",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 2,
+   "total": 2
+  }
+ },
+ {
+  "seq": 61,
+  "time": 1794348517.0517552,
+  "level": "info",
+  "stage": "run",
+  "message": "task agreement_date (value)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 62,
+  "time": 1794348517.0521884,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: verify candidates",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 63,
+  "time": 1794348520.3638167,
+  "level": "ok",
+  "stage": "S07",
+  "message": "verify candidates: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 64,
+  "time": 1794348520.3658504,
+  "level": "info",
+  "stage": "S10",
+  "message": "agreement_date: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 65,
+  "time": 1794348520.36587,
+  "level": "info",
+  "stage": "S10",
+  "message": "agreement_date: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 66,
+  "time": 1794348520.3658748,
+  "level": "info",
+  "stage": "S10",
+  "message": "agreement_date: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 67,
+  "time": 1794348520.3658812,
+  "level": "info",
+  "stage": "S10",
+  "message": "agreement_date: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 68,
+  "time": 1794348520.3658888,
+  "level": "info",
+  "stage": "S10",
+  "message": "agreement_date: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 69,
+  "time": 1794348520.365936,
+  "level": "ok",
+  "stage": "S11",
+  "message": "agreement_date: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 70,
+  "time": 1794348520.36601,
+  "level": "info",
+  "stage": "run",
+  "message": "tasks done 1/4",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 1,
+   "total": 4
+  }
+ },
+ {
+  "seq": 71,
+  "time": 1794348520.3660135,
+  "level": "ok",
+  "stage": "S13",
+  "message": "agreement_date: supported",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 72,
+  "time": 1794348520.3660195,
+  "level": "info",
+  "stage": "run",
+  "message": "task sow_approval (interpretation)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 73,
+  "time": 1794348520.366223,
+  "level": "info",
+  "stage": "S08",
+  "message": "sow_approval: 2 passage(s) go to the model",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 74,
+  "time": 1794348520.366435,
+  "level": "info",
+  "stage": "S08",
+  "message": "asking the model: interpret (thinking)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 75,
+  "time": 1794348532.187089,
+  "level": "ok",
+  "stage": "S08",
+  "message": "interpret: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 76,
+  "time": 1794348532.1904309,
+  "level": "info",
+  "stage": "S08",
+  "message": "asking the model: judge the label (thinking)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 77,
+  "time": 1794348539.9716442,
+  "level": "ok",
+  "stage": "S08",
+  "message": "judge the label: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 78,
+  "time": 1794348539.977728,
+  "level": "ok",
+  "stage": "S08",
+  "message": "sow_approval: conditional",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 79,
+  "time": 1794348539.9778473,
+  "level": "info",
+  "stage": "S10",
+  "message": "sow_approval: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 80,
+  "time": 1794348539.9778721,
+  "level": "info",
+  "stage": "S10",
+  "message": "sow_approval: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 81,
+  "time": 1794348539.9778776,
+  "level": "info",
+  "stage": "S10",
+  "message": "sow_approval: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 82,
+  "time": 1794348539.9778845,
+  "level": "info",
+  "stage": "S10",
+  "message": "sow_approval: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 83,
+  "time": 1794348539.977893,
+  "level": "info",
+  "stage": "S10",
+  "message": "sow_approval: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 84,
+  "time": 1794348539.9779372,
+  "level": "ok",
+  "stage": "S11",
+  "message": "sow_approval: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 85,
+  "time": 1794348539.97801,
+  "level": "info",
+  "stage": "run",
+  "message": "tasks done 2/4",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 2,
+   "total": 4
+  }
+ },
+ {
+  "seq": 86,
+  "time": 1794348539.9780133,
+  "level": "ok",
+  "stage": "S13",
+  "message": "sow_approval: supported",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 87,
+  "time": 1794348539.9780188,
+  "level": "info",
+  "stage": "run",
+  "message": "task obligations (records)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 88,
+  "time": 1794348539.9781103,
+  "level": "info",
+  "stage": "S09",
+  "message": "obligations: scope whole document (~622 tokens: read entirely, no region to guess)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 89,
+  "time": 1794348539.9781914,
+  "level": "info",
+  "stage": "S09",
+  "message": "obligations: 14 block(s) in scope, read in 1 window(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 90,
+  "time": 1794348539.9784102,
+  "level": "info",
+  "stage": "S09",
+  "message": "asking the model: find the records (1/1)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 91,
+  "time": 1794348555.564755,
+  "level": "ok",
+  "stage": "S09",
+  "message": "find the records (1/1): answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 92,
+  "time": 1794348555.5680134,
+  "level": "info",
+  "stage": "S09",
+  "message": "obligations: window 1/1: 10 record(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 93,
+  "time": 1794348555.5687878,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 94,
+  "time": 1794348555.568985,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 95,
+  "time": 1794348562.5943322,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 96,
+  "time": 1794348562.5975482,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 2 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 97,
+  "time": 1794348562.5976741,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 98,
+  "time": 1794348562.5976777,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 99,
+  "time": 1794348562.5976796,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 100,
+  "time": 1794348562.5976832,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 101,
+  "time": 1794348562.5976877,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 102,
+  "time": 1794348562.5977454,
+  "level": "warn",
+  "stage": "S11",
+  "message": "party: uncertain (standard policy) - 2 conflicting values and no precedence rule in the task to decide between them",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 103,
+  "time": 1794348562.5977988,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 1/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 1,
+   "total": 10
+  }
+ },
+ {
+  "seq": 104,
+  "time": 1794348562.5980217,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 105,
+  "time": 1794348562.5982103,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 106,
+  "time": 1794348566.6681085,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 107,
+  "time": 1794348566.6705642,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 108,
+  "time": 1794348566.6706932,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 109,
+  "time": 1794348566.6707087,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 110,
+  "time": 1794348566.6707125,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 111,
+  "time": 1794348566.6707172,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 112,
+  "time": 1794348566.670725,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 113,
+  "time": 1794348566.6707642,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 114,
+  "time": 1794348566.6708038,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 2/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 2,
+   "total": 10
+  }
+ },
+ {
+  "seq": 115,
+  "time": 1794348566.6710067,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 116,
+  "time": 1794348566.6712086,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 117,
+  "time": 1794348570.4711127,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 118,
+  "time": 1794348570.4770157,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 119,
+  "time": 1794348570.4771397,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 120,
+  "time": 1794348570.4771543,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 121,
+  "time": 1794348570.477158,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 122,
+  "time": 1794348570.4771636,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 123,
+  "time": 1794348570.477171,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 124,
+  "time": 1794348570.4772117,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 125,
+  "time": 1794348570.4772441,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 3/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 3,
+   "total": 10
+  }
+ },
+ {
+  "seq": 126,
+  "time": 1794348570.4774523,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 127,
+  "time": 1794348570.4776497,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 128,
+  "time": 1794348574.3442726,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 129,
+  "time": 1794348574.3465962,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 130,
+  "time": 1794348574.3467164,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 131,
+  "time": 1794348574.3467312,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 132,
+  "time": 1794348574.346735,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 133,
+  "time": 1794348574.3467395,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 134,
+  "time": 1794348574.3467467,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 135,
+  "time": 1794348574.3467934,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 136,
+  "time": 1794348574.346827,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 4/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 4,
+   "total": 10
+  }
+ },
+ {
+  "seq": 137,
+  "time": 1794348574.3470192,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 138,
+  "time": 1794348574.3472068,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 139,
+  "time": 1794348578.1184807,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 140,
+  "time": 1794348578.12063,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 141,
+  "time": 1794348578.1207492,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 142,
+  "time": 1794348578.1207635,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 143,
+  "time": 1794348578.120767,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 144,
+  "time": 1794348578.1207716,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 145,
+  "time": 1794348578.1207786,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 146,
+  "time": 1794348578.1208146,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 147,
+  "time": 1794348578.120847,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 5/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 5,
+   "total": 10
+  }
+ },
+ {
+  "seq": 148,
+  "time": 1794348578.1210337,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 149,
+  "time": 1794348578.1212158,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 150,
+  "time": 1794348581.9765675,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 151,
+  "time": 1794348581.9790313,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 152,
+  "time": 1794348581.9791462,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 153,
+  "time": 1794348581.9791603,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 154,
+  "time": 1794348581.9791636,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 155,
+  "time": 1794348581.979168,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 156,
+  "time": 1794348581.9791749,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 157,
+  "time": 1794348581.9792116,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 158,
+  "time": 1794348581.9792435,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 6/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 6,
+   "total": 10
+  }
+ },
+ {
+  "seq": 159,
+  "time": 1794348581.9794285,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 160,
+  "time": 1794348581.979612,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 161,
+  "time": 1794348585.789615,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 162,
+  "time": 1794348585.7956965,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 163,
+  "time": 1794348585.7958171,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 164,
+  "time": 1794348585.7958324,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 165,
+  "time": 1794348585.7958362,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 166,
+  "time": 1794348585.7958405,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 167,
+  "time": 1794348585.7958477,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 168,
+  "time": 1794348585.795884,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 169,
+  "time": 1794348585.7959166,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 7/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 7,
+   "total": 10
+  }
+ },
+ {
+  "seq": 170,
+  "time": 1794348585.7961192,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 171,
+  "time": 1794348585.796329,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 172,
+  "time": 1794348589.5000026,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 173,
+  "time": 1794348589.5070953,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 174,
+  "time": 1794348589.5072238,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 175,
+  "time": 1794348589.5072377,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 176,
+  "time": 1794348589.5072412,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 177,
+  "time": 1794348589.5072455,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 178,
+  "time": 1794348589.5072525,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 179,
+  "time": 1794348589.5072896,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 180,
+  "time": 1794348589.5073223,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 8/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 8,
+   "total": 10
+  }
+ },
+ {
+  "seq": 181,
+  "time": 1794348589.5075169,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 182,
+  "time": 1794348589.5077074,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 183,
+  "time": 1794348593.4080489,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 184,
+  "time": 1794348593.414546,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 1 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 185,
+  "time": 1794348593.414699,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 186,
+  "time": 1794348593.4147143,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 187,
+  "time": 1794348593.4147184,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 188,
+  "time": 1794348593.4147236,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 189,
+  "time": 1794348593.4147313,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 190,
+  "time": 1794348593.4147723,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: supported (standard policy) - accepted: grounded in 1 source block(s), no blocking finding (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 191,
+  "time": 1794348593.4148083,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 9/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 9,
+   "total": 10
+  }
+ },
+ {
+  "seq": 192,
+  "time": 1794348593.4150033,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: 1 passage(s) go to the model in 1 call(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 193,
+  "time": 1794348593.4152005,
+  "level": "info",
+  "stage": "S07",
+  "message": "asking the model: extract 1/1",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 194,
+  "time": 1794348596.281714,
+  "level": "ok",
+  "stage": "S07",
+  "message": "extract 1/1: answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 195,
+  "time": 1794348596.2875674,
+  "level": "info",
+  "stage": "S07",
+  "message": "party: the model reported 0 candidate(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 196,
+  "time": 1794348596.2876444,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 197,
+  "time": 1794348596.2876475,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 198,
+  "time": 1794348596.2876496,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 199,
+  "time": 1794348596.2876532,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 200,
+  "time": 1794348596.2876723,
+  "level": "info",
+  "stage": "S10",
+  "message": "party: coverage: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 201,
+  "time": 1794348596.287718,
+  "level": "ok",
+  "stage": "S11",
+  "message": "party: not_found (standard policy) - no passage states the value (The passage does not explicitly state which party carries the obligation (Provider or Client).); the inspection was complete (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 202,
+  "time": 1794348596.287751,
+  "level": "info",
+  "stage": "S09",
+  "message": "records of obligations have their fields 10/10",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 10,
+   "total": 10
+  }
+ },
+ {
+  "seq": 203,
+  "time": 1794348596.2882798,
+  "level": "info",
+  "stage": "S12",
+  "message": "obligations: recovery 'rediscover' (1 block region(s) the audit named were read again and merged with the records already found)",
+  "run": "r14c4cbca3b1",
+  "kind": "start",
+  "data": {}
+ },
+ {
+  "seq": 204,
+  "time": 1794348596.2883718,
+  "level": "info",
+  "stage": "S09",
+  "message": "obligations: 12 block(s) in scope, read in 1 window(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 205,
+  "time": 1794348596.2885892,
+  "level": "info",
+  "stage": "S09",
+  "message": "asking the model: find the records (1/1)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 206,
+  "time": 1794348607.0888698,
+  "level": "ok",
+  "stage": "S09",
+  "message": "find the records (1/1): answered",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 207,
+  "time": 1794348607.09495,
+  "level": "info",
+  "stage": "S09",
+  "message": "obligations: window 1/1: 7 record(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 208,
+  "time": 1794348607.095657,
+  "level": "ok",
+  "stage": "S12",
+  "message": "obligations: recovery 'rediscover' (1 block region(s) the audit named were read again and merged with the records already found) done in 10.8s",
+  "run": "r14c4cbca3b1",
+  "kind": "end",
+  "data": {
+   "seconds": 10.81
+  }
+ },
+ {
+  "seq": 209,
+  "time": 1794348607.0957,
+  "level": "warn",
+  "stage": "S12",
+  "message": "obligations: 'rediscover' -> uncertain; not kept (no improvement); 1 call(s), 10.8s",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 210,
+  "time": 1794348607.0959334,
+  "level": "info",
+  "stage": "run",
+  "message": "tasks done 3/4",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 3,
+   "total": 4
+  }
+ },
+ {
+  "seq": 211,
+  "time": 1794348607.0959368,
+  "level": "warn",
+  "stage": "S13",
+  "message": "obligations: uncertain",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 212,
+  "time": 1794348607.0959442,
+  "level": "info",
+  "stage": "run",
+  "message": "task liability_cap (value)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 213,
+  "time": 1794348607.0961037,
+  "level": "info",
+  "stage": "S10",
+  "message": "liability_cap: structure: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 214,
+  "time": 1794348607.0961065,
+  "level": "info",
+  "stage": "S10",
+  "message": "liability_cap: source grounding: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 215,
+  "time": 1794348607.096108,
+  "level": "info",
+  "stage": "S10",
+  "message": "liability_cap: normalization: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 216,
+  "time": 1794348607.0961106,
+  "level": "info",
+  "stage": "S10",
+  "message": "liability_cap: consistency: ok",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 217,
+  "time": 1794348607.0961342,
+  "level": "warn",
+  "stage": "S10",
+  "message": "liability_cap: coverage: 1 finding(s)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 218,
+  "time": 1794348607.096171,
+  "level": "ok",
+  "stage": "S11",
+  "message": "liability_cap: not_found (standard policy) - no passage states the value (No passage states the maximum total liability amount.); the inspection was complete (standard policy)",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 219,
+  "time": 1794348607.0962052,
+  "level": "info",
+  "stage": "run",
+  "message": "tasks done 4/4",
+  "run": "r14c4cbca3b1",
+  "kind": "progress",
+  "data": {
+   "done": 4,
+   "total": 4
+  }
+ },
+ {
+  "seq": 220,
+  "time": 1794348607.0962079,
+  "level": "info",
+  "stage": "S13",
+  "message": "liability_cap: not_found",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 221,
+  "time": 1794348607.0962834,
+  "level": "ok",
+  "stage": "run",
+  "message": "run summary: 17 model call(s) (0 from the cache, 0 failed), 18883 token(s), 122.7s of model time; 1 recovery attempt(s), 0 task(s) improved",
+  "run": "r14c4cbca3b1",
+  "kind": "log",
+  "data": {}
+ },
+ {
+  "seq": 222,
+  "time": 1794348607.0964518,
+  "level": "ok",
+  "stage": "run",
+  "message": "Run sample.yaml on 1 document(s) finished in 165.6s",
+  "run": "r14c4cbca3b1",
+  "kind": "run_end",
+  "data": {
+   "seconds": 165.55
+  }
+ }
+]

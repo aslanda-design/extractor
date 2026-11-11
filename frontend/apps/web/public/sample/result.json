@@ -1,0 +1,842 @@
+{
+  "results": [
+    {
+      "task_id": "agreement_date",
+      "kind": "value",
+      "status": "supported",
+      "value": "2026-03-14",
+      "records": [],
+      "completeness": null,
+      "evidence": [
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b3"
+          },
+          "role": "supports",
+          "quote": "This Service Agreement (the \"Agreement\") is entered into on 14 March 2026 by and between Harborline Analytics Ltd., a company registered in Atlantis (the \"Provider\"), and Mercer & Vale Foods Inc., a company registered in Elbonia (the \"Client\")."
+        }
+      ],
+      "validation": {
+        "findings": []
+      },
+      "acceptance": {
+        "status": "supported",
+        "policy": "standard",
+        "reasons": [
+          "accepted: grounded in 1 source block(s), no blocking finding (standard policy)"
+        ],
+        "blocking": [],
+        "hints": []
+      },
+      "alternatives": [],
+      "scope_note": "",
+      "interpretation": null,
+      "recovery": [],
+      "diagnostics": [
+        "indexed 1 document(s): 2 passage(s), 0 unresolved parsing gap(s)",
+        "evidence (standard): 2 passage(s), 366/4000 tokens, 1 gap(s)",
+        "extraction (found): all candidates agree",
+        "supported: accepted: grounded in 1 source block(s), no blocking finding (standard policy)"
+      ],
+      "execution": {
+        "document_hashes": {
+          "doc_0d15c216a7d6": "0d15c216a7d6faaf6a34b384cdc21c1fc493097d6593054ff43279efb936608e"
+        },
+        "schema_hash": "9e2df99239ee5447a1db3e08545af3ab8d1538f85db77f2acf7eb47086ed8722",
+        "runtime_fingerprint": "0bbad820eccddfddfe6673cea066bfbae831496284655b387b30e154830d93c9",
+        "models": {
+          "parsing": "layered@odl-2.5.20+docling-2.148.0+reconcile-1",
+          "embedding": "sentence_transformers:Qwen/Qwen3-Embedding-0.6B@st-6.2.0",
+          "reranking": "cross_encoder:tomaarsen/Qwen3-Reranker-0.6B-seq-cls@st-6.2.0",
+          "extraction": "ollama_chat:qwen3:8b@local",
+          "interpretation": "ollama_chat:qwen3:8b@local",
+          "verification": "fake@0",
+          "escalation": "fake@0"
+        },
+        "stage_versions": {
+          "S01": "1",
+          "S02": "1",
+          "S03": "1",
+          "S04": "1",
+          "S05": "1",
+          "S06": "1",
+          "S07": "5",
+          "S08": "1",
+          "S09": "1",
+          "S10": "1",
+          "S11": "1",
+          "S12": "1"
+        }
+      }
+    },
+    {
+      "task_id": "sow_approval",
+      "kind": "interpretation",
+      "status": "supported",
+      "value": "conditional",
+      "records": [],
+      "completeness": null,
+      "evidence": [
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b5"
+          },
+          "role": "supports",
+          "quote": "3. Approval of the Statement of Work The Client's procurement committee approves the Statement of Work, provided that the Provider delivers a signed data-protection addendum before any work starts and that total fees do not exceed the budget set out in Schedule A."
+        }
+      ],
+      "validation": {
+        "findings": []
+      },
+      "acceptance": {
+        "status": "supported",
+        "policy": "standard",
+        "reasons": [
+          "accepted: grounded in 1 source block(s), no blocking finding (standard policy)"
+        ],
+        "blocking": [],
+        "hints": []
+      },
+      "alternatives": [],
+      "scope_note": "",
+      "interpretation": {
+        "label": "conditional",
+        "justification": "The Client's procurement committee approves the Statement of Work (P1-3), but this approval is conditional on two requirements: the Provider delivering a signed data-protection addendum and total fees not exceeding the budget. The criteria require retaining conditions when approval is conditional.",
+        "conditions": [
+          "the Provider delivers a signed data-protection addendum before any work starts",
+          "total fees do not exceed the budget set out in Schedule A"
+        ],
+        "unresolved": [],
+        "stances": [
+          {
+            "stance_id": "P1-3",
+            "label": "conditional",
+            "role": "supports",
+            "quote": "3. Approval of the Statement of Work The Client's procurement committee approves the Statement of Work, provided that the Provider delivers a signed data-protection addendum before any work starts and that total fees do not exceed the budget set out in Schedule A.",
+            "passage_id": "doc_0d15c216a7d6:c1",
+            "evidence": [
+              {
+                "document_id": "doc_0d15c216a7d6",
+                "block_id": "doc_0d15c216a7d6:p1:b5"
+              }
+            ],
+            "flags": []
+          }
+        ],
+        "tool_results": []
+      },
+      "recovery": [],
+      "diagnostics": [
+        "indexed 1 document(s): 2 passage(s), 0 unresolved parsing gap(s)",
+        "evidence (standard): 2 passage(s), 366/4000 tokens, 1 gap(s)",
+        "interpretation (found): The Client's procurement committee approves the Statement of Work (P1-3), but this approval is conditional on two requirements: the Provider delivering a signed data-protection addendum and total fees not exceeding the budget. The criteria require retaining conditions when approval is conditional.",
+        "supported: accepted: grounded in 1 source block(s), no blocking finding (standard policy)"
+      ],
+      "execution": {
+        "document_hashes": {
+          "doc_0d15c216a7d6": "0d15c216a7d6faaf6a34b384cdc21c1fc493097d6593054ff43279efb936608e"
+        },
+        "schema_hash": "9e2df99239ee5447a1db3e08545af3ab8d1538f85db77f2acf7eb47086ed8722",
+        "runtime_fingerprint": "0bbad820eccddfddfe6673cea066bfbae831496284655b387b30e154830d93c9",
+        "models": {
+          "parsing": "layered@odl-2.5.20+docling-2.148.0+reconcile-1",
+          "embedding": "sentence_transformers:Qwen/Qwen3-Embedding-0.6B@st-6.2.0",
+          "reranking": "cross_encoder:tomaarsen/Qwen3-Reranker-0.6B-seq-cls@st-6.2.0",
+          "extraction": "ollama_chat:qwen3:8b@local",
+          "interpretation": "ollama_chat:qwen3:8b@local",
+          "verification": "fake@0",
+          "escalation": "fake@0"
+        },
+        "stage_versions": {
+          "S01": "1",
+          "S02": "1",
+          "S03": "1",
+          "S04": "1",
+          "S05": "1",
+          "S06": "1",
+          "S07": "5",
+          "S08": "1",
+          "S09": "1",
+          "S10": "1",
+          "S11": "1",
+          "S12": "1"
+        }
+      }
+    },
+    {
+      "task_id": "obligations",
+      "kind": "records",
+      "status": "uncertain",
+      "value": null,
+      "records": [
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b3+0",
+          "key": "1.",
+          "text": "1. Parties and Date This Service Agreement (the \"Agreement\") is entered into on 14 March 2026 by and between Harborline Analytics Ltd., a company registered in Atlantis (the \"Provider\"), and Mercer & Vale Foods Inc., a company registered in Elbonia (the \"Client\").",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b3"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "uncertain",
+              "value": null,
+              "evidence": []
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b4+0",
+          "key": "2.",
+          "text": "2. Services The Provider will deliver demand-forecasting and reporting services to the Client as described in the Statement of Work attached as Schedule A (the \"Services\").",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b4"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "supported",
+              "value": "Provider",
+              "evidence": [
+                {
+                  "document_id": "doc_0d15c216a7d6",
+                  "block_id": "doc_0d15c216a7d6:p1:b4"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b5+0",
+          "key": "3.",
+          "text": "3. Approval of the Statement of Work The Client's procurement committee approves the Statement of Work, provided that the Provider delivers a signed data-protection addendum before any work starts and that total fees do not exceed the budget set out in Schedule A.",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b5"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "supported",
+              "value": "Client",
+              "evidence": [
+                {
+                  "document_id": "doc_0d15c216a7d6",
+                  "block_id": "doc_0d15c216a7d6:p1:b5"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b7+0",
+          "key": "4.1",
+          "text": "4.1 The Provider shall deliver a written forecast report within five (5) business days after the end of each calendar month.",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b7"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "supported",
+              "value": "Provider",
+              "evidence": [
+                {
+                  "document_id": "doc_0d15c216a7d6",
+                  "block_id": "doc_0d15c216a7d6:p1:b7"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b8+0",
+          "key": "4.2",
+          "text": "4.2 The Provider shall maintain professional liability insurance for the whole term of this Agreement.",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b8"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "supported",
+              "value": "Provider",
+              "evidence": [
+                {
+                  "document_id": "doc_0d15c216a7d6",
+                  "block_id": "doc_0d15c216a7d6:p1:b8"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b10+0",
+          "key": "5.1",
+          "text": "5.1 The Client shall pay each undisputed invoice within thirty (30) days after receiving it.",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b10"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "supported",
+              "value": "Client",
+              "evidence": [
+                {
+                  "document_id": "doc_0d15c216a7d6",
+                  "block_id": "doc_0d15c216a7d6:p1:b10"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b11+0",
+          "key": "5.2",
+          "text": "5.2 The Client shall give the Provider read-only access to the sales data systems named in Schedule A.",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b11"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "supported",
+              "value": "Client",
+              "evidence": [
+                {
+                  "document_id": "doc_0d15c216a7d6",
+                  "block_id": "doc_0d15c216a7d6:p1:b11"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b12+0",
+          "key": "6.",
+          "text": "6. Confidentiality Each party shall keep the other party's Confidential Information secret and shall use it only to perform this Agreement.",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b12"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "supported",
+              "value": "Each party",
+              "evidence": [
+                {
+                  "document_id": "doc_0d15c216a7d6",
+                  "block_id": "doc_0d15c216a7d6:p1:b12"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b13+0",
+          "key": "7.",
+          "text": "7. Term and Termination This Agreement starts on the date in clause 1 and continues until terminated. Either party may terminate it for material breach that remains uncured after written notice.",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b13"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "supported",
+              "value": "Either party",
+              "evidence": [
+                {
+                  "document_id": "doc_0d15c216a7d6",
+                  "block_id": "doc_0d15c216a7d6:p1:b13"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "record_id": "obligations@doc_0d15c216a7d6:p1:b14+0",
+          "key": "8.",
+          "text": "8. General This Agreement is governed by the laws of Atlantis. Amendments must be in writing and signed by both parties.",
+          "block_ids": [
+            "doc_0d15c216a7d6:p1:b14"
+          ],
+          "parent_id": null,
+          "fields": [
+            {
+              "field_id": "party",
+              "status": "not_found",
+              "value": null,
+              "evidence": []
+            }
+          ]
+        }
+      ],
+      "completeness": "partial",
+      "evidence": [
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b3"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b4"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b5"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b7"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b8"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b10"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b11"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b12"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b13"
+          },
+          "role": "supports",
+          "quote": null
+        },
+        {
+          "ref": {
+            "document_id": "doc_0d15c216a7d6",
+            "block_id": "doc_0d15c216a7d6:p1:b14"
+          },
+          "role": "supports",
+          "quote": null
+        }
+      ],
+      "validation": {
+        "findings": [
+          {
+            "layer": "record_completeness",
+            "category": "numbering_gap",
+            "message": "the number sequence skips 4, 5: a record may be missing",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": {
+              "action": "inspect_passages",
+              "document_id": null,
+              "page": null,
+              "passage_ids": [],
+              "reason": "B4-B11"
+            }
+          },
+          {
+            "layer": "record_completeness",
+            "category": "possible_missed_record",
+            "message": "numbered text on page 1 is inside the scope and no record covers it: “4. Obligations of the Provider”",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": {
+              "action": "inspect_passages",
+              "document_id": null,
+              "page": null,
+              "passage_ids": [],
+              "reason": "B5"
+            }
+          },
+          {
+            "layer": "record_completeness",
+            "category": "possible_missed_record",
+            "message": "numbered text on page 1 is inside the scope and no record covers it: “5. Obligations of the Client”",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": {
+              "action": "inspect_passages",
+              "document_id": null,
+              "page": null,
+              "passage_ids": [],
+              "reason": "B8"
+            }
+          },
+          {
+            "layer": "record_completeness",
+            "category": "record_field_not_accepted",
+            "message": "record '1.': field 'party' is uncertain (2 conflicting values and no precedence rule in the task to decide between them)",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": null
+          },
+          {
+            "layer": "record_completeness",
+            "category": "record_field_not_accepted",
+            "message": "record '8.': field 'party' is not_found (no passage states the value (The passage does not explicitly state which party carries the obligation (Provider or Client).); the inspection was complete (standard policy))",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": null
+          }
+        ]
+      },
+      "acceptance": {
+        "status": "uncertain",
+        "policy": "standard",
+        "reasons": [
+          "10 record(s) were read, but the collection cannot be called complete:",
+          "the number sequence skips 4, 5: a record may be missing",
+          "numbered text on page 1 is inside the scope and no record covers it: “4. Obligations of the Provider”",
+          "numbered text on page 1 is inside the scope and no record covers it: “5. Obligations of the Client”",
+          "record '1.': field 'party' is uncertain (2 conflicting values and no precedence rule in the task to decide between them)",
+          "record '8.': field 'party' is not_found (no passage states the value (The passage does not explicitly state which party carries the obligation (Provider or Client).); the inspection was complete (standard policy))"
+        ],
+        "blocking": [
+          {
+            "layer": "record_completeness",
+            "category": "numbering_gap",
+            "message": "the number sequence skips 4, 5: a record may be missing",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": {
+              "action": "inspect_passages",
+              "document_id": null,
+              "page": null,
+              "passage_ids": [],
+              "reason": "B4-B11"
+            }
+          },
+          {
+            "layer": "record_completeness",
+            "category": "possible_missed_record",
+            "message": "numbered text on page 1 is inside the scope and no record covers it: “4. Obligations of the Provider”",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": {
+              "action": "inspect_passages",
+              "document_id": null,
+              "page": null,
+              "passage_ids": [],
+              "reason": "B5"
+            }
+          },
+          {
+            "layer": "record_completeness",
+            "category": "possible_missed_record",
+            "message": "numbered text on page 1 is inside the scope and no record covers it: “5. Obligations of the Client”",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": {
+              "action": "inspect_passages",
+              "document_id": null,
+              "page": null,
+              "passage_ids": [],
+              "reason": "B8"
+            }
+          },
+          {
+            "layer": "record_completeness",
+            "category": "record_field_not_accepted",
+            "message": "record '1.': field 'party' is uncertain (2 conflicting values and no precedence rule in the task to decide between them)",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": null
+          },
+          {
+            "layer": "record_completeness",
+            "category": "record_field_not_accepted",
+            "message": "record '8.': field 'party' is not_found (no passage states the value (The passage does not explicitly state which party carries the obligation (Provider or Client).); the inspection was complete (standard policy))",
+            "severity": "material",
+            "task_id": "obligations",
+            "recovery": null
+          }
+        ],
+        "hints": [
+          {
+            "action": "inspect_passages",
+            "document_id": null,
+            "page": null,
+            "passage_ids": [],
+            "reason": "B4-B11"
+          },
+          {
+            "action": "inspect_passages",
+            "document_id": null,
+            "page": null,
+            "passage_ids": [],
+            "reason": "B5"
+          },
+          {
+            "action": "inspect_passages",
+            "document_id": null,
+            "page": null,
+            "passage_ids": [],
+            "reason": "B8"
+          }
+        ]
+      },
+      "alternatives": [],
+      "scope_note": "doc_0d15c216a7d6: whole document (~622 tokens: read entirely, no region to guess)",
+      "interpretation": null,
+      "recovery": [
+        {
+          "action": "rediscover",
+          "reason": "the number sequence skips 4, 5: a record may be missing",
+          "change": "1 block region(s) the audit named were read again and merged with the records already found",
+          "status_before": "uncertain",
+          "status_after": "uncertain",
+          "value_before": 10,
+          "value_after": 10,
+          "kept": false,
+          "why": "no improvement",
+          "calls": 1,
+          "seconds": 10.8
+        }
+      ],
+      "diagnostics": [
+        "indexed 1 document(s): 2 passage(s), 0 unresolved parsing gap(s)",
+        "doc_0d15c216a7d6: 10 record report(s) -> 10 record(s)",
+        "uncertain: 10 record(s) were read, but the collection cannot be called complete:",
+        "recovery: rediscover -> uncertain, not kept (no improvement)"
+      ],
+      "execution": {
+        "document_hashes": {
+          "doc_0d15c216a7d6": "0d15c216a7d6faaf6a34b384cdc21c1fc493097d6593054ff43279efb936608e"
+        },
+        "schema_hash": "9e2df99239ee5447a1db3e08545af3ab8d1538f85db77f2acf7eb47086ed8722",
+        "runtime_fingerprint": "0bbad820eccddfddfe6673cea066bfbae831496284655b387b30e154830d93c9",
+        "models": {
+          "parsing": "layered@odl-2.5.20+docling-2.148.0+reconcile-1",
+          "embedding": "sentence_transformers:Qwen/Qwen3-Embedding-0.6B@st-6.2.0",
+          "reranking": "cross_encoder:tomaarsen/Qwen3-Reranker-0.6B-seq-cls@st-6.2.0",
+          "extraction": "ollama_chat:qwen3:8b@local",
+          "interpretation": "ollama_chat:qwen3:8b@local",
+          "verification": "fake@0",
+          "escalation": "fake@0"
+        },
+        "stage_versions": {
+          "S01": "1",
+          "S02": "1",
+          "S03": "1",
+          "S04": "1",
+          "S05": "1",
+          "S06": "1",
+          "S07": "5",
+          "S08": "1",
+          "S09": "1",
+          "S10": "1",
+          "S11": "1",
+          "S12": "1"
+        }
+      }
+    },
+    {
+      "task_id": "liability_cap",
+      "kind": "value",
+      "status": "not_found",
+      "value": null,
+      "records": [],
+      "completeness": null,
+      "evidence": [],
+      "validation": {
+        "findings": [
+          {
+            "layer": "coverage",
+            "category": "unresolved_attachment",
+            "message": "unresolved reference 'Schedule A' in doc_0d15c216a7d6:c1",
+            "severity": "info",
+            "task_id": "liability_cap",
+            "recovery": null
+          }
+        ]
+      },
+      "acceptance": {
+        "status": "not_found",
+        "policy": "standard",
+        "reasons": [
+          "no passage states the value (No passage states the maximum total liability amount.); the inspection was complete (standard policy)"
+        ],
+        "blocking": [],
+        "hints": []
+      },
+      "alternatives": [],
+      "scope_note": "",
+      "interpretation": null,
+      "recovery": [],
+      "diagnostics": [
+        "indexed 1 document(s): 2 passage(s), 0 unresolved parsing gap(s)",
+        "evidence (standard): 2 passage(s), 366/4000 tokens, 1 gap(s)",
+        "extraction (absent): no passage states the value (No passage states the maximum total liability amount.)",
+        "not_found: no passage states the value (No passage states the maximum total liability amount.); the inspection was complete (standard policy)",
+        "info: unresolved reference 'Schedule A' in doc_0d15c216a7d6:c1"
+      ],
+      "execution": {
+        "document_hashes": {
+          "doc_0d15c216a7d6": "0d15c216a7d6faaf6a34b384cdc21c1fc493097d6593054ff43279efb936608e"
+        },
+        "schema_hash": "9e2df99239ee5447a1db3e08545af3ab8d1538f85db77f2acf7eb47086ed8722",
+        "runtime_fingerprint": "0bbad820eccddfddfe6673cea066bfbae831496284655b387b30e154830d93c9",
+        "models": {
+          "parsing": "layered@odl-2.5.20+docling-2.148.0+reconcile-1",
+          "embedding": "sentence_transformers:Qwen/Qwen3-Embedding-0.6B@st-6.2.0",
+          "reranking": "cross_encoder:tomaarsen/Qwen3-Reranker-0.6B-seq-cls@st-6.2.0",
+          "extraction": "ollama_chat:qwen3:8b@local",
+          "interpretation": "ollama_chat:qwen3:8b@local",
+          "verification": "fake@0",
+          "escalation": "fake@0"
+        },
+        "stage_versions": {
+          "S01": "1",
+          "S02": "1",
+          "S03": "1",
+          "S04": "1",
+          "S05": "1",
+          "S06": "1",
+          "S07": "5",
+          "S08": "1",
+          "S09": "1",
+          "S10": "1",
+          "S11": "1",
+          "S12": "1"
+        }
+      }
+    }
+  ],
+  "summary": {
+    "seconds": 128.05,
+    "phase_seconds": {
+      "retrieve": 5.24,
+      "extract": 32.75,
+      "tasks": 90.04
+    },
+    "statuses": {
+      "supported": 2,
+      "uncertain": 1,
+      "not_found": 1
+    },
+    "total": {
+      "calls": 17,
+      "cached": 0,
+      "failed": 0,
+      "prompt_tokens": 15653,
+      "completion_tokens": 3230,
+      "seconds": 122.73
+    },
+    "stages": {
+      "S07": {
+        "calls": 13,
+        "cached": 0,
+        "failed": 0,
+        "prompt_tokens": 11877,
+        "completion_tokens": 1203,
+        "seconds": 76.74
+      },
+      "S08": {
+        "calls": 2,
+        "cached": 0,
+        "failed": 0,
+        "prompt_tokens": 1664,
+        "completion_tokens": 818,
+        "seconds": 19.6
+      },
+      "S09": {
+        "calls": 2,
+        "cached": 0,
+        "failed": 0,
+        "prompt_tokens": 2112,
+        "completion_tokens": 1209,
+        "seconds": 26.39
+      }
+    },
+    "tasks": {
+      "agreement_date": {
+        "calls": 2,
+        "cached": 0,
+        "failed": 0,
+        "prompt_tokens": 1544,
+        "completion_tokens": 189,
+        "seconds": 33.45
+      },
+      "liability_cap": {
+        "calls": 1,
+        "cached": 0,
+        "failed": 0,
+        "prompt_tokens": 1148,
+        "completion_tokens": 21,
+        "seconds": 2.61
+      },
+      "sow_approval": {
+        "calls": 2,
+        "cached": 0,
+        "failed": 0,
+        "prompt_tokens": 1664,
+        "completion_tokens": 818,
+        "seconds": 19.6
+      },
+      "obligations": {
+        "calls": 12,
+        "cached": 0,
+        "failed": 0,
+        "prompt_tokens": 11297,
+        "completion_tokens": 2202,
+        "seconds": 67.07
+      }
+    },
+    "recovery_attempts": 1,
+    "recovered": 0,
+    "concurrency": 1
+  },
+  "run_id": "20261110-230721-530-run",
+  "recorded": {
+    "at": "2026-11-10",
+    "seconds": 166.7,
+    "model": "qwen3:8b"
+  }
+}
