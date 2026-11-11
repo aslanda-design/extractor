@@ -106,6 +106,20 @@ every adapter and pipeline signature. One local GPU serves one call at a time, a
 **Why.** A specification should mean the same thing on a laptop model and on a hosted one, and a model swap should never
 require touching a specification that a domain expert wrote.
 
+## 13. Corrections are stored beside predictions, never over them
+
+**Decision.** A review (accept, correct, reject) is appended to a file next to the run, with a snapshot of what the engine said. The run is never edited, a review of a
+prediction that has since changed is shown as stale and not applied, and the view a person ends up with keeps the engine's answer beside the reviewer's.
+
+**Why.** The difference between what the engine said and what a person decided is the only measurement of real-world accuracy, and it is destroyed by overwriting. Reviews
+can then be exported as evaluation labels (only human decisions: the engine's answers never grade themselves).
+
+## 14. Documents stay on this machine unless someone says otherwise
+
+**Decision.** A model reached through a host that is not loopback is refused unless `privacy.allow_remote_models: true`, and a run lists which capabilities went remote.
+
+**Why.** The engine is built for confidential contracts. A hosted model is a legitimate choice only when it is a deliberate one, and the result should show it happened.
+
 ## Known limits
 
 - One document family (commercial contracts), ten documents, one model measured.
@@ -113,3 +127,5 @@ require touching a specification that a domain expert wrote.
 - Re-OCR of a damaged page as a recovery action is not built.
 - Interpretation tasks return labels only; free-text answers with claim-by-claim citations are not built.
 - Nested records are in the contract and not implemented.
+- Review of one record or field is available from the command line and the API; the web screen reviews whole answers.
+- No authentication or multi-user service: the review screen is a local tool.

@@ -386,6 +386,8 @@ Return the requested IDs, values, source evidence, statuses, alternatives, valid
 
 Keep corrections separate from original model predictions. Reviewed corrections can later supply evaluation and training data.
 
+**Implementation notes (phase 10).** A run has an identity: a fingerprint of the document hashes, the specification hash, the runtime fingerprint, the stage versions and the depth, so reproducing a run reproduces its id. Every run is stored under that id together with the execution metadata, which also lists the capabilities served by a model that is not on the local machine. A review (accept, correct, or reject, for a task, a record or a record field) is stored apart from the run, append-only, with a snapshot and fingerprint of the prediction it was made about; a review whose prediction has changed is reported as stale and is not applied. The view a person ends up with always keeps the engine's answer next to the reviewer's. Reviewed decisions can be exported as the expected section of a corpus case; nothing the engine said on its own is exported as a label. A self-contained report (no scripts, no external files, all text escaped) explains each answer: its evidence, the findings that blocked it, the recovery attempts and the reviews. Remote models are refused unless the runtime configuration allows them explicitly.
+
 ## 7. Result semantics
 
 Use one consistent vocabulary throughout the engine.

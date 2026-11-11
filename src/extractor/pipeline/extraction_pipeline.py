@@ -31,10 +31,13 @@ in their own modules.
 import json
 import threading
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import __version__
 from ..adapters import AdapterSet, build_adapters
+from ..artifacts.fingerprint import fingerprint
 from ..artifacts import ArtifactStore
 from ..config import RuntimeConfig
 from ..config.runtime import RetrievalSettings
@@ -72,7 +75,7 @@ from ..scope import DocumentRequest, build_manifest, resolve_task_documents
 from ..spec import compile_specification_file
 
 STAGE_VERSIONS = {"S01": "1", "S02": "1", "S03": "1", "S04": "1", "S05": "1", "S06": "1", "S07": "5", "S08": "1", "S09": "1",
-                  "S10": "1", "S11": "1", "S12": "1"}
+                  "S10": "1", "S11": "1", "S12": "1", "S13": "1"}
 DECIDED = (TaskStatus.SUPPORTED, TaskStatus.NOT_FOUND)
 
 
@@ -147,8 +150,10 @@ def _context(
         retrieval=config.retrieval.resolve(profile), profile=profile or config.retrieval.profile, store=store,
         execution=ExecutionMetadata(
             document_hashes={d.document_id: d.sha256 for d in manifest.documents},
+            document_names={d.document_id: d.filename for d in manifest.documents},
             schema_hash=spec.schema_hash, runtime_fingerprint=config.fingerprint(),
-            models=adapters.model_labels(), stage_versions=STAGE_VERSIONS))
+            models=adapters.model_labels(), stage_versions=STAGE_VERSIONS,
+            remote=[f"{cap}:{host}" for cap, host in adapters.remote().items()], engine_version=__version__))
 
 
 def plan_only(
@@ -246,7 +251,23 @@ def run_pipeline_report(
     emit("run", f"run summary: {summary.total.calls} model call(s) ({summary.total.cached} from the cache, {summary.total.failed} failed), "
                 f"{summary.total.prompt_tokens + summary.total.completion_tokens} token(s), {summary.total.seconds:.1f}s of model time; "
                 f"{summary.recovery_attempts} recovery attempt(s), {summary.recovered} task(s) improved", "ok")
-    return RunReport(specification=spec.name, results=ordered, summary=summary, execution=ctx.execution)
+    report = RunReport(specification=spec.name, results=ordered, summary=summary, execution=ctx.execution,
+                       run_id=run_id_of(ctx.execution, ctx.profile), created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    if store is not None:  # S13: every run is kept, so it can be listed, reopened, reviewed and reported later
+        store.put(RUNS, report.run_id, report)
+        emit("S13", f"run {report.run_id} saved ({len(ordered)} task(s)); reviews are kept apart from it", "ok")
+    return report
+
+
+RUNS = "runs"  # artifact-store kind of saved RunReports
+
+
+def run_id_of(execution: ExecutionMetadata, profile: str) -> str:
+    """Names a run by what determines it: the documents, the specification, the settings, the stage versions, the depth.
+    Running the same thing again gives the same id, so a review made on a run still applies to its reproduction."""
+    return fingerprint(sorted(execution.document_hashes.items()), execution.schema_hash, execution.runtime_fingerprint,
+                       execution.stage_versions, profile)[:16]
+
 
 
 def summarize(results: list[TaskResult], ctx: RunContext, seconds: float, limit: int) -> RunSummary:

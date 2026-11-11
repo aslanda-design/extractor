@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Sequence
+from urllib.parse import urlparse
 
 from ..artifacts.store import ArtifactStore
 from ..config.runtime import ParsingConfig
@@ -22,6 +23,9 @@ from ..contracts.generation import ModelPrompt, ModelReply
 from ..contracts.manifest import DocumentEntry
 from ..contracts.task import TaskSpecification
 from ..contracts.validation import ValidationFinding
+
+
+LOOPBACK = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
 
 
 class Capability(StrEnum):
@@ -75,6 +79,16 @@ class Adapter(ABC):
     @property
     def capabilities(self) -> AdapterCapabilities:
         return AdapterCapabilities()
+
+    @property
+    def remote_host(self) -> str | None:
+        """The host this adapter sends document text to when it is NOT this machine; None for a local model.
+        Read from the `base_url` an adapter declares in its identity, so a new HTTP adapter is covered without extra code."""
+        url = self.identity.settings.get("base_url")
+        if not url:
+            return None
+        host = (urlparse(url).hostname or "").lower()
+        return None if host in LOOPBACK else host or None
 
 
 class ParserAdapter(Adapter):

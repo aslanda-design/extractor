@@ -59,8 +59,24 @@ export interface TaskResult {
   diagnostics: string[]
 }
 
+/** What a person ends up with for one target: the engine's answer, or the reviewer's. The engine's answer is always kept next to it. */
+export interface ReviewedItem {
+  target: { task_id: string; record_key: string | null; field_id: string | null }
+  source: "engine" | "human"
+  status: Status
+  value: unknown
+  decision: "accept" | "correct" | "reject" | null
+  review_id: string | null
+  stale: boolean
+  note: string
+  engine_status: Status
+  engine_value: unknown
+}
+
 export interface RunOutput {
   run_id?: string
+  /** the engine's own run id (S13): the run is saved under it and reviews attach to it; absent in runs saved before it existed */
+  engine_run_id?: string
   results: TaskResult[]
   summary?: {
     seconds: number

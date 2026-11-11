@@ -33,6 +33,16 @@ class RunBody(BaseModel):
     documents: list[str]
 
 
+class ReviewBody(BaseModel):
+    task_id: str
+    decision: str  # accept | correct | reject
+    record: str | None = None  # a records task: the record's key
+    field: str | None = None  # ...and one of its fields
+    value: object = None  # the right value (decision = correct)
+    note: str = ""
+    reviewer: str = ""
+
+
 class RetrieveBody(BaseModel):
     documents: list[str]
     text: str
@@ -196,6 +206,30 @@ def create_app(workspace_dir: Path) -> FastAPI:
         return ws.extract(body.documents, body.task, body.profile, body.overrides)
 
     # --- plan (S05) ---
+    @app.get("/api/engine-runs")
+    def engine_runs():
+        return ws.engine_runs()
+
+    @app.get("/api/engine-runs/{run_id}")
+    def run_detail(run_id: str):
+        return ws.run_detail(run_id)
+
+    @app.get("/api/engine-runs/{run_id}/reviews")
+    def run_reviews(run_id: str):
+        return ws.run_reviews(run_id)
+
+    @app.post("/api/engine-runs/{run_id}/reviews")
+    def add_review(run_id: str, body: ReviewBody):
+        return ws.add_review(run_id, body.task_id, body.decision, body.record, body.field, body.value, body.note, body.reviewer)
+
+    @app.get("/api/engine-runs/{run_id}/report", response_class=HTMLResponse)
+    def run_report_html(run_id: str):
+        return ws.run_report_html(run_id)
+
+    @app.get("/api/engine-runs/{run_id}/labels")
+    def run_labels(run_id: str):
+        return ws.run_labels(run_id)
+
     @app.post("/api/plan")
     def plan(body: PlanBody):  # sync: retrieval only, no chat model
         return ws.plan(body.spec, body.documents, body.grouping)

@@ -29,15 +29,17 @@ Measured on a private corpus of **10 commercial contracts** (digital and scanned
 
 | Task kind | Labeled | Accepted automatically | Accepted answers that are right | False accepts |
 | --- | --- | --- | --- | --- |
-| value | 100 tasks | 70% (first full run) | 99% (69 of 70) | 1 |
-| value, after two fixes (offline replay, approximate) | 100 tasks | 74% | 100% | 0 |
-| interpretation | 30 tasks | 93% | 100% | 0 |
-| records | 11 tasks, 116 records | record recall 84%, precision 84%, field exact 70% | 3 of 11 collections fully accepted | - |
+| value | 100 tasks | 79% | 97% | 2 |
+| value + interpretation, end to end | 130 tasks | 82% | 98% | 2 |
+| of which the held-out test split | 39 tasks | 82% | 97% | 1 |
+| records | 11 tasks, 116 records | record recall 89%, precision 87%, field exact 71% | 2 of 11 collections fully accepted | - |
 
-How to read these numbers honestly: they are from one document family, every fix was tuned on these same documents (the
-held-out split is reported separately from now on), each configuration was run once, and only one model was measured.
-Recovery (S12) is built and unit-tested but **not yet measured** on the corpus. The corpus itself is not in the repository
-(the documents are not mine to publish), so the numbers cannot be reproduced from a clone yet.
+How to read these numbers honestly: they are from one document family, the fixes were tuned on these same documents (the
+test split is reported separately and is close to the others), and only one model was measured. Single runs are
+deterministic with this setup (three uncached runs of one case were identical), so a difference between two runs is a
+real difference, not noise. Recovery (S12) was measured: the default actions never triggered on this corpus, and the
+optional ones (`refield`, `deepen`) rescued nothing, so they stay off. The corpus itself is not in the repository (the
+documents are not mine to publish), so the numbers cannot be reproduced from a clone yet.
 
 ## What is in the box
 
@@ -50,13 +52,15 @@ Recovery (S12) is built and unit-tested but **not yet measured** on the corpus. 
   budget, and every attempt is recorded.
 - **A resumable run**: finished model calls are cached by content, so a crashed run repeats only what is missing.
 - **An evaluation harness** that says not only how often the engine is wrong but which stage caused each error.
-- **A web interface** that shows every step, and a CLI. 416 unit tests (a scripted model stands in for the real one).
+- **Results you can keep and review**: every run has a reproducible id and is saved; a reviewer's accept / correct / reject is stored beside the engine's answer, never over it, and can be exported as evaluation labels; a self-contained HTML report explains every answer.
+- **Documents stay local by default**: a hosted model needs an explicit `privacy.allow_remote_models: true` and is listed in every result.
+- **A web interface** that shows every step, a CLI and a small Python API (`from extractor.api import Extractor`). 440 unit tests (a scripted model stands in for the real one).
 
 The design is in [ARCHITECTURE.md](ARCHITECTURE.md) and the reasons behind its main choices are in [DECISIONS.md](DECISIONS.md). The rest of this file is the user guide and the reference.
 
 > **Status:** every stage S01-S13 is implemented. Phases done: foundations, scope, YAML compiler, parsing, indexing, retrieval,
-> value extraction, validation and acceptance, interpretation, records, orchestration and recovery. Next: a stable results
-> package and API (phase 10) and a public benchmark, a second model and hardening (phase 11).
+> value extraction, validation and acceptance, interpretation, records, orchestration and recovery, results and review. Next: a public
+> benchmark, a second model and hardening (phase 11).
 
 ## 1. Setup
 
@@ -304,6 +308,7 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `validation/` | S10, S11 | **`validation_pipeline.py` is the whole validation and acceptance stage in one readable file** (structure -> grounding -> normalization -> consistency -> coverage / risk register -> optional semantic check -> qualification -> policy -> decision). Helpers: `structure.py`, `grounding.py`, `numeric.py`, `consistency.py`, `coverage_check.py`, `semantic.py`, `policy.py` (profiles), `qualification.py`, `findings.py` | Behaviour: `validation_pipeline.py` and the layer it calls; which findings block: `policy.py` or `acceptance:` in the runtime config |
 | `execution/` | S05 | How a run is carried out: `call_cache.py` (a finished model call is never paid twice), `meter.py` (calls, tokens and seconds per stage and task), `scope.py` (the scope of one run), `scheduler.py` (independent tasks side by side, never more than the backend serves). | Limits: `execution:` in the runtime config |
 | `recovery/` | S12 | **`recovery_pipeline.py` is the whole recovery stage in one readable file** (plan -> budget -> act -> keep -> record). Helpers: `actions.py` and `records_actions.py` (which finding calls for which change), `budget.py`, `keeping.py` (which result stands), `attempt.py`. | Which actions run: `recovery.actions`; a new action: `actions.py` |
+| `review/`, `report/`, `api.py` | S13 | Reviews kept apart from predictions (`review/`), the self-contained HTML report (`report/`), and the public Python API `Extractor` (`api.py`). | `review/reviewing.py`, `report/html_report.py` |
 | `pipeline/` | all | **`extraction_pipeline.py` is the whole engine in one readable file**: S01-S13 as numbered calls. `run_report` returns the stable `RunReport` (results + what the run cost). | `extraction_pipeline.py` |
 | `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing (`parsing_eval.py`), chunking (`indexing_eval.py`), retrieval (`retrieval_eval.py`) and value-extraction (`extraction_eval.py`) quality. | `corpus.py` for the label format |
 | `events.py` | all | Activity log every stage writes to (`emit`, `step`, `progress`, `run_scope`); the UI Logs tab and progress strip read it. | New stage: log each numbered step |
@@ -425,6 +430,35 @@ actions that are off change how an answer is produced: turn one on only after `e
 **Prompt injection.** Every system prompt ends with the rule that document text is data, not instructions. The rule lowers
 the risk; the engine is what bounds it: a model can only return JSON of a fixed shape, a value must be quoted from the source,
 and no model output can change a status or a setting.
+
+### Results, review and reports (S13)
+
+```
+python -m extractor run spec.yaml --docs contract.pdf --config runtime.yaml     # prints: run 3f9c1a2b7d4e5f60
+python -m extractor runs                                                       # every saved run, newest first
+python -m extractor review 3f9c1a2b7d4e5f60 maturity_date --correct 2027-04-01 --reviewer ana --note "amended in July"
+python -m extractor review 3f9c1a2b7d4e5f60 clauses --record "(b)" --field text --accept
+python -m extractor reviews 3f9c1a2b7d4e5f60                                   # the answers a person ends up with
+python -m extractor report 3f9c1a2b7d4e5f60 --out report.html                  # one self-contained file, no scripts
+python -m extractor labels 3f9c1a2b7d4e5f60 --out labels.yaml                  # reviewed corrections as corpus labels
+```
+
+```python
+from extractor.api import Extractor
+
+engine = Extractor("runtime.yaml")
+run = engine.run("spec.yaml", ["contract.pdf"])               # RunReport: results + what the run cost, saved under run.run_id
+engine.review(run.run_id, "maturity_date", "correct", value="2027-04-01", reviewer="ana")
+for item in engine.reviewed(run.run_id):                       # engine answer, or the reviewer's, with the engine's always kept
+    print(item.target.label(), item.source, item.status.value, item.value)
+```
+
+A review never changes the run: it is stored beside it with a snapshot of what the engine said, a later review supersedes an earlier one (the earlier stays on file),
+and a review of an answer that has since changed is shown as stale and not applied. `accept` is only possible for an answer the engine stood behind (supported or not found).
+
+**Where your documents go.** By default every model must run on this machine. A model at a non-local `base_url` (a hosted chat, embedding or rerank endpoint) is refused with
+a message naming the capability and host, unless the runtime config sets `privacy: {allow_remote_models: true}`. Every result lists the capabilities that were remote
+(`execution.remote`), and the report shows it at the top.
 
 ### How validation and acceptance work (S10, S11)
 

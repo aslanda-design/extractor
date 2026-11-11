@@ -76,6 +76,10 @@ class AdapterSet:
             Capability.VERIFICATION: self.verifier,
         }
 
+    def remote(self) -> dict[str, str]:
+        """capability -> host, for every adapter that sends data to another machine."""
+        return {cap.value: host for cap, a in self.all().items() if (host := getattr(a, "remote_host", None))}  # getattr: a duck-typed test adapter has no such property
+
     def model_labels(self) -> dict[str, str]:
         return {cap.value: a.identity.label() for cap, a in self.all().items()}
 
@@ -99,7 +103,7 @@ def build_adapter(capability: Capability, config: RuntimeConfig, store: Artifact
 
 def build_adapters(config: RuntimeConfig, store: ArtifactStore | None = None) -> AdapterSet:
     context = AdapterContext(parsing=config.parsing, store=store)
-    return AdapterSet(
+    adapters = AdapterSet(
         parser=_build(Capability.PARSING, config, context),
         embedder=_build(Capability.EMBEDDING, config, context),
         reranker=_build(Capability.RERANKING, config, context),
@@ -108,3 +112,9 @@ def build_adapters(config: RuntimeConfig, store: ArtifactStore | None = None) ->
         verifier=_build(Capability.VERIFICATION, config, context),
         escalator=_build(Capability.ESCALATION, config, context),
     )
+    remote = adapters.remote()
+    if remote and not config.privacy.allow_remote_models:
+        where = ", ".join(f"{cap} -> {host}" for cap, host in remote.items())
+        raise ValueError(f"these models are not on this machine and would receive passages of your documents ({where}); "
+                         "to allow it set `privacy.allow_remote_models: true` in the runtime config")
+    return adapters

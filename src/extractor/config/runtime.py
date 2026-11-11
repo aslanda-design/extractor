@@ -64,6 +64,12 @@ class StorageConfig(StrictModel):
     artifact_dir: Path = Path(".extractor_artifacts")
 
 
+class PrivacyConfig(StrictModel):
+    """Where documents may go. The engine is built for confidential contracts: by default every model must run on this machine."""
+
+    allow_remote_models: bool = False  # True = a hosted chat / embedding / rerank endpoint may receive passages of your documents (it is then listed in every result)
+
+
 class ParsingConfig(StrictModel):
     """Stage S03 tuning. Thresholds are meant to be adjusted against your scans."""
 
@@ -314,6 +320,7 @@ class RuntimeConfig(StrictModel):
     interpretation: InterpretationSettings = InterpretationSettings()
     records: RecordSettings = RecordSettings()
     recovery: RecoverySettings = RecoverySettings()
+    privacy: PrivacyConfig = PrivacyConfig()
     interpretation_profiles: dict[str, dict] = {}  # profile name -> InterpretationSettings fields to change at that depth
     storage: StorageConfig = StorageConfig()
 

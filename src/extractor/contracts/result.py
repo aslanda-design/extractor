@@ -20,10 +20,13 @@ class ExecutionMetadata(StrictModel):
     """Enough to reproduce the run: inputs, schema, parser and model versions."""
 
     document_hashes: dict[str, str] = {}  # document_id -> sha256
+    document_names: dict[str, str] = {}  # document_id -> the file name it was given
     schema_hash: str = ""
     runtime_fingerprint: str = ""
     models: dict[str, str] = {}  # capability -> "name@revision"
     stage_versions: dict[str, str] = {}
+    remote: list[str] = []  # capabilities served by a model that is NOT on this machine (documents or passages were sent out); empty = fully local
+    engine_version: str = ""
 
 
 class RecoveryAttempt(StrictModel):
@@ -108,6 +111,8 @@ class RunReport(StrictModel):
     `python -m extractor schema` prints the JSON Schema of this model."""
 
     format: str = RESULT_FORMAT
+    run_id: str = ""  # names this run: the same documents, specification, settings and engine give the same id
+    created_at: str = ""
     specification: str | None = None  # the name in the YAML
     results: list[TaskResult] = []
     summary: RunSummary = RunSummary()

@@ -138,6 +138,10 @@ parsing:                             # S03 routing thresholds
 storage:
   artifact_dir: .extractor_artifacts
 
+# --- where documents may go -------------------------------------------------------------------
+privacy:
+  allow_remote_models: false         # true = a hosted chat / embedding / rerank endpoint (a non-local base_url) may receive passages of your documents
+
 # --- how a run is carried out (never what it decides) ------------------------------------------
 execution:
   max_concurrency: 1                 # tasks of one dependency layer side by side; capped by the model's own max_parallel

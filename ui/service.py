@@ -53,6 +53,8 @@ from extractor.parsing.report import write_report
 from extractor.pipeline import index_documents, plan_only, run_pipeline_report
 from extractor.evaluation.recovery_eval import evaluate_recovery
 from extractor.execution import execution_scope
+from extractor.api import Extractor, UnknownRun
+from extractor.review import ReviewStore, UnknownTarget
 from extractor.config.runtime import RECOVERY_ACTIONS
 from extractor.retrieval.retrieval_pipeline import gather_evidence
 from extractor.retrieval.types import RetrievalRequest, RetrievalTools, request_from_field, request_from_task
@@ -648,9 +650,61 @@ class Workspace:
             "manifest": manifest.model_dump(mode="json"),
             "results": [r.model_dump(mode="json") for r in report.results],
             "summary": report.summary.model_dump(mode="json"),  # calls, tokens, seconds, recovery: what the run cost
+            "engine_run_id": report.run_id, "execution": report.execution.model_dump(mode="json"),  # S13: the run is saved under this id; reviews attach to it
             "spec_text": self.get_spec(spec_name),
             "trace": trace,
         }
+
+    # --- saved runs, reviews and reports (S13) --------------------------------------------------------
+    # (`self.runs` is the UI job history; these are the ENGINE's runs: results saved under their run id, with reviews kept apart)
+
+    def _api(self) -> Extractor:
+        api = Extractor(self.get_config())
+        api.store = self.store  # the workspace store: the same place `run` saved the run
+        api.reviews = ReviewStore(self.store)
+        return api
+
+    def engine_runs(self) -> list[dict]:
+        return self._api().runs()
+
+    def _unknown(self, exc: UnknownRun) -> UiError:
+        return UiError(str(exc.args[0]))
+
+    def run_detail(self, run_id: str) -> dict:
+        try:
+            return self._api().run_report(run_id).model_dump(mode="json")
+        except UnknownRun as exc:
+            raise self._unknown(exc) from None
+
+    def run_reviews(self, run_id: str) -> dict:
+        """The reviews of a run and the answers a person ends up with (the engine's, or the reviewer's where there is a review)."""
+        api = self._api()
+        try:
+            return {"reviews": [r.model_dump(mode="json") for r in api.reviews_of(run_id)],
+                    "items": [i.model_dump(mode="json") for i in api.reviewed(run_id)]}
+        except UnknownRun as exc:
+            raise self._unknown(exc) from None
+
+    def add_review(self, run_id: str, task_id: str, decision: str, record: str | None, field: str | None, value, note: str, reviewer: str) -> dict:
+        try:
+            made = self._api().review(run_id, task_id, decision, record=record or None, field=field or None, value=value, note=note, reviewer=reviewer)
+        except UnknownRun as exc:
+            raise self._unknown(exc) from None
+        except (ValueError, UnknownTarget) as exc:  # nothing to accept, a correction without a value, a task that is not in the run...
+            raise UiError(str(exc)) from None
+        return made.model_dump(mode="json")
+
+    def run_report_html(self, run_id: str) -> str:
+        try:
+            return self._api().report_html(run_id)
+        except UnknownRun as exc:
+            raise self._unknown(exc) from None
+
+    def run_labels(self, run_id: str) -> dict:
+        try:
+            return self._api().labels(run_id)
+        except UnknownRun as exc:
+            raise self._unknown(exc) from None
 
     @recorded("plan")
     def plan(self, spec_name: str, documents: list[str], grouping: str | None = None) -> dict:

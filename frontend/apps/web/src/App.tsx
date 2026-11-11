@@ -16,7 +16,7 @@ import { ThemeToggle } from "@/lib/theme"
 import { ViewToggle, type RightView } from "@/components/view-toggle"
 import { FieldList, PipelineStage } from "@/pipeline/panels"
 import { usePipelineFeed } from "@/pipeline/use-feed"
-import type { BlocksData, EngineEvent, Highlight, RunOutput, Source } from "@/lib/types"
+import type { BlocksData, EngineEvent, Highlight, ReviewedItem, RunOutput, Source } from "@/lib/types"
 
 const SAMPLE_NAME = "Service agreement (fictional sample)"
 
@@ -29,6 +29,7 @@ export function App() {
   const [jump, setJump] = useState<{ page: number; token: number } | null>(null)
   const [tab, setTab] = useState<"document" | "results">("document")
   const [error, setError] = useState<string | null>(null)
+  const [reviewed, setReviewed] = useState<Record<string, ReviewedItem>>({})
 
   const [events, setEvents] = useState<EngineEvent[]>([])
   const [logMode, setLogMode] = useState<LogMode>("idle")
@@ -53,6 +54,35 @@ export function App() {
   const token = useRef(0)
 
   const items = useMemo(() => (result ? toReviewItems(result.results, blocks) : []), [result, blocks])
+
+  // S13: reviews belong to the engine run; they are loaded for a run that has an id and are saved apart from the run
+  const engineRunId = result?.engine_run_id
+  useEffect(() => {
+    let alive = true
+    const load = engineRunId ? api.reviews(engineRunId).then((r) => r.items) : Promise.resolve<ReviewedItem[]>([])
+    load.then(
+      (list) => alive && setReviewed(Object.fromEntries(list.filter((i) => i.target.record_key === null).map((i) => [i.target.task_id, i]))),
+      () => alive && setReviewed({})
+    )
+    return () => {
+      alive = false
+    }
+  }, [engineRunId])
+  const review = useMemo(
+    () =>
+      engineRunId
+        ? {
+            reportUrl: api.reportUrl(engineRunId),
+            items: reviewed,
+            onReview: async (taskId: string, decision: "accept" | "correct" | "reject", value?: string, note?: string) => {
+              await api.review(engineRunId, { task_id: taskId, decision, value, note })
+              const list = (await api.reviews(engineRunId)).items
+              setReviewed(Object.fromEntries(list.filter((i) => i.target.record_key === null).map((i) => [i.target.task_id, i])))
+            },
+          }
+        : undefined,
+    [engineRunId, reviewed]
+  )
   const isSample = source?.kind === "sample"
 
   const openSample = useCallback(async () => {
@@ -301,6 +331,7 @@ export function App() {
           ) : (
           <ResultsPanel
             trailing={toggle}
+            review={review}
             items={items}
             selectedId={selectedId}
             onSelect={setSelectedId}

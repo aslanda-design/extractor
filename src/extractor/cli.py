@@ -197,6 +197,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.no_cache:
         config = config.model_copy(update={"execution": config.execution.model_copy(update={"cache_model_calls": False})})
     report = run_report(args.spec, _request(args), config, args.profile)
+    print(f"run {report.run_id}" + (f"  (REMOTE models: {', '.join(report.execution.remote)})" if report.execution.remote else ""), file=sys.stderr)
     if args.out:  # the stable output file: results + what the run cost (schema: `python -m extractor schema`)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
@@ -206,6 +207,75 @@ def cmd_run(args: argparse.Namespace) -> int:
                 f"{s.recovery_attempts} recovery attempt(s), {s.recovered} task(s) improved")
         return 0
     print("[" + ",\n".join(r.model_dump_json(indent=2) for r in report.results) + "]")
+    return 0
+
+
+def _engine(args: argparse.Namespace):
+    from .api import Extractor
+
+    return Extractor(_real_config(args.config) if args.config else None)
+
+
+def cmd_runs(args: argparse.Namespace) -> int:
+    rows = _engine(args).runs()
+    for r in rows:
+        print(f"{r['run_id']}  {r['created_at']}  {r['specification'] or '-':<24}{r['tasks']:>3} task(s)  "
+              + ", ".join(f"{n} {k}" for k, n in r["statuses"].items()) + f"  {r['reviews']} review(s)" + (f"  REMOTE: {', '.join(r['remote'])}" if r["remote"] else ""))
+    if not rows:
+        print("no saved runs yet (`python -m extractor run ... `)")
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    import json as _json
+
+    decision = "correct" if args.correct is not None else "reject" if args.reject else "accept"
+    value = None
+    if args.correct is not None:
+        try:
+            value = _json.loads(args.correct)  # numbers and lists as JSON; anything else is a plain string
+        except ValueError:
+            value = args.correct
+    made = _engine(args).review(args.run_id, args.task, decision, record=args.record, field=args.field, value=value, note=args.note or "", reviewer=args.reviewer or "")
+    print(f"{made.review_id}: {decision} {made.target.label()} (the engine said {made.prediction.status.value}"
+          + (f": {made.prediction.value!r}" if made.prediction.value is not None else "") + ")")
+    return 0
+
+
+def cmd_reviews(args: argparse.Namespace) -> int:
+    engine = _engine(args)
+    for item in engine.reviewed(args.run_id):
+        if item.decision is None:
+            continue
+        print(f"{item.target.label():<44}{item.decision.value:<8}{item.source:<8}{item.status.value:<10}{'' if item.value is None else item.value!r}"
+              + ("  STALE: not applied" if item.stale else "") + (f"  ({item.note})" if item.note else ""))
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    from .contracts.result import RunReport
+    from .report import render_report
+
+    if Path(args.run).is_file():  # a file written by `run --out`
+        html = render_report(RunReport.model_validate_json(Path(args.run).read_text(encoding="utf-8")))
+    else:
+        html = _engine(args).report_html(args.run)
+    out = args.out or Path(f"report-{Path(args.run).stem}.html")
+    out.write_text(html, encoding="utf-8")
+    print(f"wrote {out} ({len(html) // 1024} KB, self-contained: no scripts, no external files)")
+    return 0
+
+
+def cmd_labels(args: argparse.Namespace) -> int:
+    import yaml
+
+    labels = _engine(args).labels(args.run_id)
+    text = yaml.safe_dump(labels, sort_keys=False, allow_unicode=True)
+    if args.out:
+        args.out.write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}: {len(labels['expected'])} reviewed task(s), {len(labels['needs_labeling'])} still need labeling")
+    else:
+        print(text)
     return 0
 
 
@@ -366,6 +436,41 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("schema", help="print the JSON Schema of the file `run --out` writes")
     p.set_defaults(func=cmd_schema)
+
+    p = sub.add_parser("runs", help="list the saved runs (every run is saved under its run id)")
+    p.add_argument("--config", type=Path, help="runtime config YAML (its storage.artifact_dir says where runs are kept)")
+    p.set_defaults(func=cmd_runs)
+
+    p = sub.add_parser("review", help="record what a person decided about one task, record or record field (kept apart from the run)")
+    p.add_argument("run_id")
+    p.add_argument("task", help="task id")
+    p.add_argument("--record", help="records task: the record's key as the document prints it")
+    p.add_argument("--field", help="records task: one field of that record")
+    what = p.add_mutually_exclusive_group(required=True)
+    what.add_argument("--accept", action="store_true", help="the engine's answer is right")
+    what.add_argument("--correct", metavar="VALUE", help="the right value (JSON for numbers or lists, otherwise text)")
+    what.add_argument("--reject", action="store_true", help="the document gives no answer for this")
+    p.add_argument("--note", help="why")
+    p.add_argument("--reviewer", help="who is deciding")
+    p.add_argument("--config", type=Path, help="runtime config YAML")
+    p.set_defaults(func=cmd_review)
+
+    p = sub.add_parser("reviews", help="the answers a person ends up with for a run: the engine's, or the reviewer's where there is a review")
+    p.add_argument("run_id")
+    p.add_argument("--config", type=Path, help="runtime config YAML")
+    p.set_defaults(func=cmd_reviews)
+
+    p = sub.add_parser("report", help="write the self-contained HTML report of a run (a run id, or a file written by `run --out`)")
+    p.add_argument("run")
+    p.add_argument("--out", type=Path, help="output file (default: report-<run>.html)")
+    p.add_argument("--config", type=Path, help="runtime config YAML")
+    p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("labels", help="reviewed corrections as the `expected:` section of a corpus case (a starting point: place and check it)")
+    p.add_argument("run_id")
+    p.add_argument("--out", type=Path)
+    p.add_argument("--config", type=Path, help="runtime config YAML")
+    p.set_defaults(func=cmd_labels)
 
     p = sub.add_parser("parse", help="parse one document and write an inspection report")
     p.add_argument("document", type=Path)

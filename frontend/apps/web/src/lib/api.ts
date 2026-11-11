@@ -1,4 +1,4 @@
-import type { BlocksData, EngineEvent, HistoryRow, RunOutput, SpecDraft, UploadedDocument } from "./types"
+import type { BlocksData, EngineEvent, HistoryRow, ReviewedItem, RunOutput, SpecDraft, UploadedDocument } from "./types"
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -44,6 +44,16 @@ export const api = {
     fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec, documents }) }).then((r) =>
       json<RunOutput>(r)
     ),
+  /** Reviews of a saved engine run and the answers a person ends up with. */
+  reviews: (engineRunId: string) =>
+    fetch(`/api/engine-runs/${encodeURIComponent(engineRunId)}/reviews`).then((r) => json<{ items: ReviewedItem[] }>(r)),
+  review: (engineRunId: string, body: { task_id: string; decision: string; value?: unknown; note?: string; reviewer?: string }) =>
+    fetch(`/api/engine-runs/${encodeURIComponent(engineRunId)}/reviews`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<{ review_id: string }>(r)),
+  reportUrl: (engineRunId: string) => `/api/engine-runs/${encodeURIComponent(engineRunId)}/report`,
   fileUrl: (name: string) => `/api/documents/${encodeURIComponent(name)}/file`,
   lastLogSeq: () => fetch("/api/logs?since=2147483647").then((r) => json<{ last: number }>(r)).then((d) => d.last),
 }

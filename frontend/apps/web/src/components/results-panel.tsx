@@ -2,7 +2,8 @@ import type { ReactNode } from "react"
 import { AlertTriangle, CheckCircle2, CircleHelp, CircleSlash, FileSearch, XCircle } from "lucide-react"
 
 import { cn } from "@workspace/ui/lib/utils"
-import type { Highlight, ReviewItem, Status } from "@/lib/types"
+import { ReviewBar } from "@/components/review-bar"
+import type { Highlight, ReviewItem, ReviewedItem, Status } from "@/lib/types"
 
 const STATUS: Record<Status, { label: string; cls: string; Icon: typeof CheckCircle2 }> = {
   supported: { label: "Supported", cls: "bg-ok-soft text-ok", Icon: CheckCircle2 },
@@ -33,9 +34,11 @@ interface Props {
   running?: boolean
   /** sits at the right end of the header (the Results / Pipeline switch) */
   trailing?: ReactNode
+  /** S13: how to open the report of the run these results belong to, what reviewers decided, and how to record a decision */
+  review?: { reportUrl: string; items: Record<string, ReviewedItem>; onReview: (taskId: string, decision: "accept" | "correct" | "reject", value?: string, note?: string) => Promise<void> }
 }
 
-export function ResultsPanel({ items, selectedId, onSelect, onFocusHighlights, sampleLabel, running, trailing }: Props) {
+export function ResultsPanel({ items, selectedId, onSelect, onFocusHighlights, sampleLabel, running, trailing, review }: Props) {
   const counts = items.reduce<Record<string, number>>((m, i) => ({ ...m, [i.status]: (m[i.status] ?? 0) + 1 }), {})
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -46,6 +49,11 @@ export function ResultsPanel({ items, selectedId, onSelect, onFocusHighlights, s
           {counts.supported ? ` · ${counts.supported} supported` : ""}
           {items.length - (counts.supported ?? 0) ? ` · ${items.length - (counts.supported ?? 0)} to review` : ""}
         </span>
+        {review && (
+          <a href={review.reportUrl} target="_blank" rel="noreferrer" className="text-primary ml-auto text-xs underline-offset-2 hover:underline">
+            Open the report
+          </a>
+        )}
         {trailing}
       </div>
       {sampleLabel && (
@@ -90,7 +98,7 @@ export function ResultsPanel({ items, selectedId, onSelect, onFocusHighlights, s
                   {item.display ?? (item.status === "not_found" ? "No value in the document" : "No accepted value")}
                 </span>
               </button>
-              {selected && <Detail item={item} onFocusHighlights={onFocusHighlights} />}
+              {selected && <Detail item={item} onFocusHighlights={onFocusHighlights} review={review} />}
             </li>
           )
         })}
@@ -99,7 +107,7 @@ export function ResultsPanel({ items, selectedId, onSelect, onFocusHighlights, s
   )
 }
 
-function Detail({ item, onFocusHighlights }: { item: ReviewItem; onFocusHighlights: Props["onFocusHighlights"] }) {
+function Detail({ item, onFocusHighlights, review }: { item: ReviewItem; onFocusHighlights: Props["onFocusHighlights"]; review?: Props["review"] }) {
   const material = item.findings.filter((f) => f.severity === "material")
   const notes = item.findings.filter((f) => f.severity !== "material")
   return (
@@ -210,6 +218,15 @@ function Detail({ item, onFocusHighlights }: { item: ReviewItem; onFocusHighligh
           </p>
         ))}
       </section>
+
+      {review && (
+        <ReviewBar
+          taskId={item.id}
+          status={item.status}
+          reviewed={review.items[item.id]}
+          onReview={(decision, value, note) => review.onReview(item.id, decision, value, note)}
+        />
+      )}
     </div>
   )
 }
