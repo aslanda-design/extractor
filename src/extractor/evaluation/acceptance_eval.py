@@ -45,6 +45,7 @@ from ..validation.qualification import qualification_key, write_qualification
 from .attribution import save_record
 from .corpus import Corpus
 from .extraction_eval import IMPLEMENTED_KINDS, same_value
+from .scoped import NO_SPLIT, measured, split_of
 
 GOOD = {"accepted_correct", "correct_absence", "correct_uncertain"}
 
@@ -53,6 +54,7 @@ class TaskAcceptance(StrictModel):
     case_id: str
     task_id: str
     profile: str
+    split: str = NO_SPLIT  # the case's `split:` tag (train / validation / test)
     description: str = ""
     outcome: str
     expected: object = None
@@ -108,11 +110,34 @@ class AcceptanceReport(StrictModel):
                          f"{'-' if r.qualified is None else 'yes' if r.qualified else 'no'}")
             if r.categories:
                 lines.append("          blocking findings: " + ", ".join(f"{k} x{v}" for k, v in sorted(r.categories.items(), key=lambda kv: -kv[1])))
+        lines += self.by_split()
         lines.append("")
         lines += [f"  {o.outcome:<17}{o.case_id}/{o.task_id} [{o.profile}] expected={o.expected!r} status={o.status} value={o.value!r}"
                   f"{' (proposal had ' + repr(o.proposal_value) + ')' if o.outcome.startswith('over') else ''} {'; '.join(o.reasons[:1])}"
                   for o in self.outcomes if o.outcome not in GOOD]
         return "\n".join(lines)
+
+
+    def by_split(self) -> list[str]:
+        """The same numbers per `split:` tag. Design fixes on train / validation; the test split is the number to report."""
+        splits = sorted({o.split for o in self.outcomes})
+        if splits in ([], [NO_SPLIT]):
+            return []
+        lines = ["", f"{'by split':<10}{'profile':<10}{'tasks':>6}{'automation':>11}{'precision':>10}{'falseacc':>9}{'falseabs':>9}"]
+        for profile in dict.fromkeys(o.profile for o in self.outcomes):
+            for split in splits:
+                mine = [o.outcome for o in self.outcomes if o.profile == profile and o.split == split]
+                accepted = mine.count("accepted_correct") + mine.count("false_accept")
+                precision = f"{mine.count('accepted_correct') / accepted * 100:5.0f}%" if accepted else "   -  "
+                lines.append(f"{split:<10}{profile:<10}{len(mine):>6}{accepted / len(mine) * 100:>10.0f}%{precision:>10}"
+                             f"{mine.count('false_accept'):>9}{mine.count('false_absence'):>9}")
+        return lines
+
+    def headline(self) -> dict[str, float | None]:
+        """The numbers compared between repeated runs (`eval --repeat`)."""
+        r = self.rows[0]
+        return {"automation": r.automation_rate, "accepted precision": r.accepted_precision,
+                "false accepts": float(r.counts.get("false_accept", 0)), "false absences": float(r.counts.get("false_absence", 0))}
 
 
 def judge(expected_status: TaskStatus, expected_value, status: TaskStatus, value, proposal_value) -> str:
@@ -131,6 +156,7 @@ def judge(expected_status: TaskStatus, expected_value, status: TaskStatus, value
     return {TaskStatus.UNCERTAIN: "correct_uncertain", TaskStatus.SUPPORTED: "false_accept"}.get(status, "false_absence")
 
 
+@measured
 def evaluate_acceptance(
     corpus: Corpus, config: RuntimeConfig, adapters: AdapterSet, store: ArtifactStore, profiles: list[str],
     kinds: list[TaskKind] | None = None, tags: list[str] | None = None, case_ids: list[str] | None = None,
@@ -195,7 +221,7 @@ def evaluate_acceptance(
                 cats = sorted({f.category for f in validated.report.material})
                 categories.update(cats)
                 outcomes.append(TaskAcceptance(
-                    case_id=case.case_id, task_id=task_id, profile=profile, description=task.description, outcome=outcome,
+                    case_id=case.case_id, task_id=task_id, profile=profile, split=split_of(case), description=task.description, outcome=outcome,
                     expected=expected.value if expected.status == TaskStatus.SUPPORTED else expected.status.value, status=status.value,
                     value=value, proposal_value=proposal.value if proposal.outcome.value == "found" else None,
                     reasons=validated.decision.reasons, categories=cats))

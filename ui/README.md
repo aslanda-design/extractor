@@ -46,4 +46,6 @@ Workspace (default `.extractor_artifacts/workspace/`): `uploads/`, `specs/`, `re
 
 Phase 7 (interpretation): the Extraction tab has a Kind selector (value / interpretation) and decision criteria; the result shows the S08 decision card; Settings has the interpretation model and knobs; the Corpus extraction measure includes interpretation tasks and shows why each miss happens (error attribution).
 
+Phase 9 (execution and recovery): the Run tab shows what the run cost (model calls, cached calls, tokens, seconds, by stage and task) and, for every task recovery touched, its trail (action, reason, change, before -> after, kept or not, cost); Settings has `execution`, `recovery`, `records` and the escalation model; the Corpus tab has "Measure recovery" (rescues, harm, calls per action); the activity strip shows S12; every job reads finished model calls from the call cache.
+
 Phase 8 (records): the Run tab shows each records task with its audit, scope and record table; the Corpus tab has "Measure records" (recall, precision, field accuracy, completeness, causes).

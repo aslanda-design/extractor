@@ -19,7 +19,7 @@ from .artifacts import ArtifactStore
 from .config import RuntimeConfig, load_runtime_config
 from .contracts.common import TaskKind
 from .evaluation import CorpusError, load_corpus, run_corpus
-from .pipeline import index_documents, run_files
+from .pipeline import index_documents, result_schema, run_report
 from .scope import (
     DocumentRequest,
     ManifestError,
@@ -194,9 +194,42 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     config = _real_config(args.config)
-    results = run_files(args.spec, _request(args), config, args.profile)
-    print("[" + ",\n".join(r.model_dump_json(indent=2) for r in results) + "]")
+    if args.no_cache:
+        config = config.model_copy(update={"execution": config.execution.model_copy(update={"cache_model_calls": False})})
+    report = run_report(args.spec, _request(args), config, args.profile)
+    if args.out:  # the stable output file: results + what the run cost (schema: `python -m extractor schema`)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        s = report.summary
+        print(f"wrote {args.out}: " + ", ".join(f"{n} {k}" for k, n in s.statuses.items())
+              + f"; {s.total.calls} model call(s) ({s.total.cached} cached), {s.total.seconds:.0f}s of model time, {s.seconds:.0f}s in all; "
+                f"{s.recovery_attempts} recovery attempt(s), {s.recovered} task(s) improved")
+        return 0
+    print("[" + ",\n".join(r.model_dump_json(indent=2) for r in report.results) + "]")
     return 0
+
+
+def cmd_schema(args: argparse.Namespace) -> int:
+    """The JSON Schema of the file `run --out` writes."""
+    import json
+
+    print(json.dumps(result_schema(), indent=2))
+    return 0
+
+
+def _repeated(args: argparse.Namespace, evaluate) -> None:
+    """Run a measurement once (with the call cache, unless --no-cache) or `--repeat N` times without it, and print the spread."""
+    from .evaluation.scoped import spread
+
+    if args.repeat and args.repeat > 1:
+        reports = []
+        for n in range(1, args.repeat + 1):
+            print(f"--- run {n}/{args.repeat} ---")
+            reports.append(evaluate(False))
+            print(reports[-1].format())
+        print(spread([r.headline() for r in reports]))
+        return
+    print(evaluate(False if args.no_cache else None).format())
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
@@ -254,7 +287,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         case_ids = args.cases.split(",") if args.cases else None
         groupings = args.grouping.split(",") if args.grouping else None
         print(evaluate_extraction(corpus, config, build_adapters(config, store), store, profiles, kinds, tags, case_ids, groupings,
-                                  save_dir=args.save).format())
+                                  save_dir=args.save, cache=False if args.no_cache else None).format())
     if args.attribute:
         from .evaluation.attribution import attribute
 
@@ -277,7 +310,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
         tags = args.tags.split(",") if args.tags else None
         case_ids = args.cases.split(",") if args.cases else None
         task_ids = args.tasks.split(",") if args.tasks else None
-        print(evaluate_records(corpus, config, build_adapters(config, store), store, profiles, tags, case_ids, task_ids, save_dir=args.save).format())
+        adapters = build_adapters(config, store)
+        _repeated(args, lambda cache: evaluate_records(corpus, config, adapters, store, profiles, tags, case_ids, task_ids, save_dir=args.save, cache=cache))
     if args.acceptance and corpus.cases:
         from .evaluation.acceptance_eval import evaluate_acceptance
 
@@ -287,9 +321,19 @@ def cmd_eval(args: argparse.Namespace) -> int:
         kinds = [TaskKind(k) for k in args.kinds.split(",")] if args.kinds else None
         tags = args.tags.split(",") if args.tags else None
         case_ids = args.cases.split(",") if args.cases else None
-        report = evaluate_acceptance(corpus, config, build_adapters(config, store), store, profiles, kinds, tags, case_ids,
-                                     save_dir=args.save, from_dir=args.from_dir, qualify=args.qualify)
-        print(report.format())
+        adapters = build_adapters(config, store)
+        _repeated(args, lambda cache: evaluate_acceptance(corpus, config, adapters, store, profiles, kinds, tags, case_ids,
+                                                          save_dir=args.save, from_dir=args.from_dir, qualify=args.qualify, cache=cache))
+    if args.recovery and corpus.cases:
+        from .evaluation.recovery_eval import evaluate_recovery
+
+        config = _real_config(args.config)
+        store = ArtifactStore(config.storage.artifact_dir)
+        kinds = [TaskKind(k) for k in args.kinds.split(",")] if args.kinds else None
+        tags = args.tags.split(",") if args.tags else None
+        case_ids = args.cases.split(",") if args.cases else None
+        print(evaluate_recovery(corpus, config, build_adapters(config, store), store, args.profile, kinds, tags, case_ids, save_dir=args.save,
+                                cache=False if args.no_cache else None).format())
     if args.score and corpus.cases:
         report = run_corpus(corpus, load_runtime_config(args.config))
         print(f"status accuracy: {report.status_accuracy:.0%}  value accuracy: {report.value_accuracy}")
@@ -316,7 +360,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--config", type=Path, help="runtime config YAML")
         if name == "run":
             p.add_argument("--profile", help="retrieval depth: light | standard | deep | one of your own")
+            p.add_argument("--out", type=Path, help="write the whole run (results + cost summary) to this JSON file; schema: `extractor schema`")
+            p.add_argument("--no-cache", action="store_true", help="make every model call again instead of resuming from the call cache")
         p.set_defaults(func=func)
+
+    p = sub.add_parser("schema", help="print the JSON Schema of the file `run --out` writes")
+    p.set_defaults(func=cmd_schema)
 
     p = sub.add_parser("parse", help="parse one document and write an inspection report")
     p.add_argument("document", type=Path)
@@ -366,6 +415,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--records", action="store_true", help="measure records extraction (S09): record recall/precision, field accuracy, completeness")
     p.add_argument("--tasks", help="--records only: only these task ids, comma separated")
     p.add_argument("--attribute-records", type=Path, help="read the folder written by --records --save and say why each missing / extra / wrong record happened")
+    p.add_argument("--recovery", action="store_true", help="measure S12 (the whole engine, recovery as configured): rescues, harm and calls per action")
+    p.add_argument("--no-cache", action="store_true", help="do not read finished model calls from the call cache (every call is made again)")
+    p.add_argument("--repeat", type=int, help="--acceptance / --records only: run N times without the call cache and print the spread of each metric")
     p.add_argument("--qualify", action="store_true", help="--acceptance only: write a qualification record when the thresholds in acceptance.qualification are met")
     p.add_argument("--profile", help="retrieval profile(s) to evaluate, comma separated (e.g. light,standard,deep)")
     p.add_argument("--kinds", help="--extraction / --acceptance only: task kinds to score, comma separated (value,interpretation,records; default: all implemented)")

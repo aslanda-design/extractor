@@ -43,6 +43,7 @@ from ..spec import compile_specification_file
 from .attribution import save_record
 from .corpus import Corpus
 from .matching import same_value  # noqa: F401  (re-exported: other evaluators import it from here)
+from .scoped import measured
 
 # Task kinds the engine can extract today. Add a kind here when its extractor exists (records: phase 8);
 # the evaluator, CLI (`--kinds`) and UI then accept it without other changes.
@@ -139,6 +140,7 @@ def classify(expected_status: TaskStatus, expected_value, proposal, passage_text
     return "other"
 
 
+@measured
 def evaluate_extraction(
     corpus: Corpus, config: RuntimeConfig, adapters: AdapterSet, store: ArtifactStore, profiles: list[str],
     kinds: list[TaskKind] | None = None, tags: list[str] | None = None, case_ids: list[str] | None = None,

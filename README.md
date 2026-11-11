@@ -1,15 +1,62 @@
 # Extractor
 
-A reusable engine that takes documents plus a YAML specification and returns structured
-results with source evidence and explicit uncertainty. The design lives in
-[ARCHITECTURE.md](ARCHITECTURE.md); this file explains how to use the engine and what
-each part does.
+A document extraction engine: **documents + a YAML specification in, structured results with source evidence and explicit
+uncertainty out.** It runs entirely on local models (a laptop GPU is enough) and any model can be swapped through configuration.
 
-> **Status:** phases 0-1 (foundations, scope, YAML compiler) are complete; phases 2
-> (parsing), 3 (chunking + indexes) and 4 (evidence retrieval) are implemented. The extraction
-> strategies (value / interpretation / records) and validation are not built yet, so `run`
-> returns `failed` for every task (after parsing, indexing and retrieving evidence for it).
-> See [PROGRESS.md](PROGRESS.md) for the plan.
+The idea it is built on: **a model proposes, the engine verifies and decides.** A language model is never trusted for its
+confidence. Every answer must be quoted from the document, the quote is located by code, and a policy the engine owns decides
+whether the answer is accepted. When the engine cannot be sure it says `uncertain`, and it says `not_found` only after the
+inspection it was asked to do is complete. A technical failure is `failed`, never "not found".
+
+```
+documents ─┐                                                       ┌─ supported   value + the source blocks that prove it
+           ├─ scope ─ parse ─ index ─ retrieve ─ extract ─ validate ─ accept ─ recover ─┤  not_found   inspection complete, nothing states it
+YAML spec ─┘   S01    S03     S04      S06     S07-S09     S10      S11     S12     └─ uncertain / failed, with the reasons
+```
+
+Three kinds of task, each with its own strategy:
+
+| Kind | Question | How |
+| --- | --- | --- |
+| `value` | What is the value, if present? | hybrid retrieval, the model lists candidates with quotes, code normalizes and reconciles them |
+| `interpretation` | What do the documents support under my criteria? | evidence by label, exact arithmetic by engine tools, a judge that can only downgrade |
+| `records` | What are ALL the occurrences? | the whole scope is read (never top-k), the model points and the engine cuts, an audit checks completeness |
+
+## Results so far
+
+Measured on a private corpus of **10 commercial contracts** (digital and scanned) with human-reviewed labels, using a local
+**Qwen3 8B** model (Ollama) on an RTX 3060, standard settings:
+
+| Task kind | Labeled | Accepted automatically | Accepted answers that are right | False accepts |
+| --- | --- | --- | --- | --- |
+| value | 100 tasks | 70% (first full run) | 99% (69 of 70) | 1 |
+| value, after two fixes (offline replay, approximate) | 100 tasks | 74% | 100% | 0 |
+| interpretation | 30 tasks | 93% | 100% | 0 |
+| records | 11 tasks, 116 records | record recall 84%, precision 84%, field exact 70% | 3 of 11 collections fully accepted | - |
+
+How to read these numbers honestly: they are from one document family, every fix was tuned on these same documents (the
+held-out split is reported separately from now on), each configuration was run once, and only one model was measured.
+Recovery (S12) is built and unit-tested but **not yet measured** on the corpus. The corpus itself is not in the repository
+(the documents are not mine to publish), so the numbers cannot be reproduced from a clone yet.
+
+## What is in the box
+
+- **One readable file per pipeline** (`*_pipeline.py`: numbered steps, each a call into its own module), and the whole engine in
+  `src/extractor/pipeline/extraction_pipeline.py`.
+- **Adapters** for parsing, embedding, reranking and chat models; the engine never names a model or a vendor.
+- **Evidence by stable block ids**, a coverage ledger (parsed / retrieved / inspected are separate facts), four statuses.
+- **Acceptance as policy**: validation findings are facts; a profile (`strict` / `standard` / `lenient`) says which block.
+- **Bounded recovery**: a task that was not accepted gets targeted second tries that go through the same validation, within a
+  budget, and every attempt is recorded.
+- **A resumable run**: finished model calls are cached by content, so a crashed run repeats only what is missing.
+- **An evaluation harness** that says not only how often the engine is wrong but which stage caused each error.
+- **A web interface** that shows every step, and a CLI. 416 unit tests (a scripted model stands in for the real one).
+
+The design is in [ARCHITECTURE.md](ARCHITECTURE.md) and the reasons behind its main choices are in [DECISIONS.md](DECISIONS.md). The rest of this file is the user guide and the reference.
+
+> **Status:** every stage S01-S13 is implemented. Phases done: foundations, scope, YAML compiler, parsing, indexing, retrieval,
+> value extraction, validation and acceptance, interpretation, records, orchestration and recovery. Next: a stable results
+> package and API (phase 10) and a public benchmark, a second model and hardening (phase 11).
 
 ## 1. Setup
 
@@ -37,8 +84,7 @@ after that everything works offline.
 
 ## 2. Quick tour
 
-**Prefer a graphical interface?** It shows every step of the engine (parse, chunk and index, settings, corpus metrics). Run `ui\launch.bat` (after `pip install -r ui
-equirements.txt`): upload documents, parse and inspect them, edit and validate specs, change settings and check your corpus from the browser. See [ui/README.md](ui/README.md).
+**Prefer a graphical interface?** It shows every step of the engine (parse, chunk and index, settings, corpus metrics). Run `ui\launch.bat` (after `pip install -r ui/requirements.txt`): upload documents, parse and inspect them, edit and validate specs, change settings and check your corpus from the browser. See [ui/README.md](ui/README.md).
 
 Or use the command line:
 
@@ -81,8 +127,14 @@ python -m extractor eval --acceptance --save runs/a1 --config runtime.yaml     #
 python -m extractor eval --acceptance --from runs/a1 --config runtime.yaml     # re-runs only validation: no model, seconds
 python -m extractor eval --acceptance --from runs/a1 --qualify                 # write a qualification record if the thresholds are met
 
-# 9. Run the whole engine (S01-S04, S06, S07, S10 and S11 real; interpretation and records are stubs returning `failed`)
-python -m extractor run examples/spec.example.yaml --docs contract.pdf --profile standard
+# 9. Run the whole engine (S01-S13). --out writes the stable result file: every task result + what the run cost
+python -m extractor run examples/spec.example.yaml --docs contract.pdf --profile standard --out result.json --config runtime.yaml
+python -m extractor schema                                              # the JSON Schema of that file
+#    A run that stops half way resumes: run the same command again and finished model calls are read from the cache.
+
+# 10. Measure recovery (S12): what each action rescued, harmed and cost; and the run-to-run spread of a measure
+python -m extractor eval --recovery --save runs/r1 --config runtime.yaml
+python -m extractor eval --acceptance --repeat 3 --config runtime.yaml  # 3 runs without the call cache
 ```
 
 ## 3. The two inputs you write
@@ -190,7 +242,14 @@ parsing:                     # S03 thresholds - tune these against your scans
   ocr_hires_dpi: 300         # last rung of the retry ladder
   use_cache: true
 
-execution: {max_concurrency: 1, max_recovery_attempts: 2}
+execution:                                      # how a run is carried out (never what it decides)
+  max_concurrency: 1            # tasks of one dependency layer side by side, capped by the model's own max_parallel
+  max_recovery_attempts: 2      # S12: recovery tries per task (0 = none)
+  cache_model_calls: true       # a finished model call is not made again (resume after a crash)
+recovery:                                       # S12: bounded second tries for tasks that were not accepted
+  actions: [retry_call, widen_evidence, rediscover]   # measure before adding refield / deepen / escalate_model
+  max_calls: 6
+  max_seconds: 180
 storage: {artifact_dir: .extractor_artifacts}
 ```
 
@@ -241,7 +300,9 @@ data shapes in `contracts/`. Every module's first docstring line names its stage
 | `records/` | S09 | **`records_pipeline.py` is the whole records stage in one readable file** (scope -> discover boundaries window by window -> exact positions -> identity -> fields per record -> reconcile -> audit). Helpers: `scope.py`, `discovery.py`, `spans.py`, `fields.py`, `audit.py`, `outline.py`, `prompts.py`, `schema.py` | Behaviour: `records_pipeline.py` and its helper; boundaries: the YAML `record.identity` / `record.boundaries`; knobs: `records:` |
 | `interpretation/` | S08 | **`interpretation_pipeline.py` is the whole interpretation stage in one readable file** (frame -> evidence -> ask -> read quotes -> check by code -> judge -> conclude). Helpers: `prompts.py`, `schema.py`, `reading.py`, `checks.py`, `judging.py`, `tools.py` (exact calculations the engine runs for the model; MCP-shaped definitions) | Behaviour: `interpretation_pipeline.py` and its helper; wording: `prompts.py`; model: `models.interpretation`; knobs: `interpretation:` |
 | `validation/` | S10, S11 | **`validation_pipeline.py` is the whole validation and acceptance stage in one readable file** (structure -> grounding -> normalization -> consistency -> coverage / risk register -> optional semantic check -> qualification -> policy -> decision). Helpers: `structure.py`, `grounding.py`, `numeric.py`, `consistency.py`, `coverage_check.py`, `semantic.py`, `policy.py` (profiles), `qualification.py`, `findings.py` | Behaviour: `validation_pipeline.py` and the layer it calls; which findings block: `policy.py` or `acceptance:` in the runtime config |
-| `pipeline/` | all | **`extraction_pipeline.py` is the whole engine in one readable file**: S01-S13 as numbered calls, real or marked STUB. Each phase turns its STUB line into a call. | `extraction_pipeline.py` |
+| `execution/` | S05 | How a run is carried out: `call_cache.py` (a finished model call is never paid twice), `meter.py` (calls, tokens and seconds per stage and task), `scope.py` (the scope of one run), `scheduler.py` (independent tasks side by side, never more than the backend serves). | Limits: `execution:` in the runtime config |
+| `recovery/` | S12 | **`recovery_pipeline.py` is the whole recovery stage in one readable file** (plan -> budget -> act -> keep -> record). Helpers: `actions.py` and `records_actions.py` (which finding calls for which change), `budget.py`, `keeping.py` (which result stands), `attempt.py`. | Which actions run: `recovery.actions`; a new action: `actions.py` |
+| `pipeline/` | all | **`extraction_pipeline.py` is the whole engine in one readable file**: S01-S13 as numbered calls. `run_report` returns the stable `RunReport` (results + what the run cost). | `extraction_pipeline.py` |
 | `evaluation/` | - | Loads and validates your labeled corpus (`corpus.py`), scores engine output (`harness.py`), measures parsing (`parsing_eval.py`), chunking (`indexing_eval.py`), retrieval (`retrieval_eval.py`) and value-extraction (`extraction_eval.py`) quality. | `corpus.py` for the label format |
 | `events.py` | all | Activity log every stage writes to (`emit`, `step`, `progress`, `run_scope`); the UI Logs tab and progress strip read it. | New stage: log each numbered step |
 | `cli.py` | - | The command line. |
@@ -332,6 +393,36 @@ neighbours, reference / definition / qualifier switches, short-document limit, p
 `light` is cheap and fast, `standard` the default, `deep` wide pools and two expansion rounds; define
 your own under `retrieval.profiles` (optionally `extends:` another one). These are runtime
 settings; they cannot appear in the task YAML.
+
+### How execution and recovery work (S05, S12)
+
+**Execution.** Every model call goes through one function (`extraction/calling.py::call_model`). It reads the answer from the
+call cache when the same model was already asked the same prompt, counts calls, tokens and seconds per stage and task, and
+retries a failed call *with a change that depends on why it failed* (a transport error waits and re-sends; bad JSON asks for
+JSON only; a cut-off answer asks for a shorter one; a prompt that does not fit is not retried). Tasks run one dependency layer
+at a time; the tasks of a layer run side by side up to `execution.max_concurrency`, never more than the model's own
+`max_parallel`. A task whose `depends_on` was not accepted is not sent to the model.
+
+**Recovery.** Open `src/extractor/recovery/recovery_pipeline.py`. A task that was not accepted gets at most
+`execution.max_recovery_attempts` targeted tries, within `recovery.max_calls` and `recovery.max_seconds`:
+
+| Action | When | What changes | Default |
+| --- | --- | --- | --- |
+| `retry_call` | a model call failed | smaller calls (or no reasoning preamble when the answer was cut off) | on |
+| `widen_evidence` | the evidence budget left a passage out | the evidence is gathered again with a bigger budget | on |
+| `rediscover` | the records audit found a numbering gap, uncovered numbered text, a failed or cut-off window | only the named block regions are read again and merged | on |
+| `refield` | a required field of a record was not accepted | that record's fields again, with candidate verification | off |
+| `deepen` | candidates conflict, a quote is not in the source | the next retrieval and reading depth | off |
+| `escalate_model` | the same | the same evidence, read by `models.escalation` | off |
+
+Every attempt runs extraction **and** validation again, so a recovered answer passes the same policy as a first answer. The new
+result stands only if it is better; two attempts that found different values stay `uncertain` and both values are shown; an
+accepted answer is never replaced. Each attempt is on the result (`recovery`: action, reason, change, cost, kept or not). The
+actions that are off change how an answer is produced: turn one on only after `eval --recovery` shows rescues with no harm.
+
+**Prompt injection.** Every system prompt ends with the rule that document text is data, not instructions. The rule lowers
+the risk; the engine is what bounds it: a model can only return JSON of a fixed shape, a value must be quoted from the source,
+and no model output can change a status or a setting.
 
 ### How validation and acceptance work (S10, S11)
 
@@ -497,6 +588,12 @@ expected answers). Start from `evaluation/corpus/_template/` and read
 - `python -m extractor eval --acceptance [--save DIR | --from DIR] [--qualify]` runs the labeled value tasks through S06, S07 and
   S10/S11 and reports, per profile: automation rate (share `supported`), **accepted-answer precision**, false accepts,
   false absences, over-abstention (the proposal was right but acceptance blocked it) and the blocking findings.
+- `python -m extractor eval --recovery [--cases ...] [--tags ...] [--save DIR]` runs the WHOLE engine and reports, per recovery
+  action: attempts, kept, **rescues** (not accepted before, right now), **harm** (a new false accept or false absence), calls and
+  calls per rescue, with automation and precision before and after.
+- `--repeat N` (with `--acceptance` or `--records`) runs N times without the call cache and prints the spread of each metric:
+  a change smaller than the spread is noise. `--no-cache` makes every call again. Acceptance and records measures print their
+  numbers per `split:` tag: design fixes on train / validation cases and report the test split.
 - `python -m extractor eval --score` scores full engine output (status and value accuracy).
 
 ## 6. Rules of the codebase
@@ -505,7 +602,8 @@ expected answers). Start from `evaluation/corpus/_template/` and read
 - The YAML says *what*; `RuntimeConfig` says *which model / limits*. Never mix them.
 - Heavy libraries are imported only inside `parsing/backends/*`, the embedding adapters and the store modules, and load lazily.
 - Every pipeline is ONE readable `*_pipeline.py` file with numbered steps calling helpers in their own
-  modules (`chunking_pipeline.py`, `retrieval_pipeline.py`, `value_pipeline.py`, `validation/validation_pipeline.py`, and the whole engine in `extraction_pipeline.py`).
+  modules (`chunking_pipeline.py`, `retrieval_pipeline.py`, `value_pipeline.py`, `interpretation_pipeline.py`, `records_pipeline.py`, `validation_pipeline.py`, `recovery_pipeline.py`, and the whole engine in `extraction_pipeline.py`).
   Models, databases and depth are never hard-coded in them.
 - Everything crossing a stage boundary is a type from `contracts/`.
-- Update ARCHITECTURE.md when a contract changes, and PROGRESS.md as phases complete.
+- Every generative call goes through `extraction/calling.py::call_model` (cache, meter, retries, the document-is-data guard). Never call `adapter.generate` from a stage.
+- Update ARCHITECTURE.md when a contract changes.

@@ -58,7 +58,7 @@ class FakeExtractor(ExtractorAdapter):
     identity = _FAKE
 
     def generate(self, prompt: ModelPrompt) -> ModelReply:
-        return ModelReply(error="fake extractor: no model configured (set models.extraction in the runtime config)")
+        return ModelReply(failure="no_model", error="fake extractor: no model configured (set models.extraction in the runtime config)")
 
 
 class FakeInterpreter(InterpreterAdapter):
@@ -67,7 +67,7 @@ class FakeInterpreter(InterpreterAdapter):
     identity = _FAKE
 
     def generate(self, prompt: ModelPrompt) -> ModelReply:
-        return ModelReply(error="fake interpreter: no model configured (set models.interpretation in the runtime config)")
+        return ModelReply(failure="no_model", error="fake interpreter: no model configured (set models.interpretation in the runtime config)")
 
 
 class FakeVerifier(VerifierAdapter):
@@ -76,4 +76,4 @@ class FakeVerifier(VerifierAdapter):
     identity = _FAKE
 
     def generate(self, prompt: ModelPrompt) -> ModelReply:
-        return ModelReply(error="fake verifier: no model configured (set models.verification in the runtime config)")
+        return ModelReply(failure="no_model", error="fake verifier: no model configured (set models.verification in the runtime config)")

@@ -28,5 +28,8 @@ register_adapter(Capability.INTERPRETATION, "openai_compatible_chat", OpenAIComp
 register_adapter(Capability.VERIFICATION, "ollama_chat", OllamaChat)
 register_adapter(Capability.VERIFICATION, "openai_compatible_chat", OpenAICompatibleChat)
 register_adapter(Capability.VERIFICATION, "fake", fakes.FakeVerifier)
+register_adapter(Capability.ESCALATION, "fake", fakes.FakeExtractor)
+register_adapter(Capability.ESCALATION, "ollama_chat", OllamaChat)
+register_adapter(Capability.ESCALATION, "openai_compatible_chat", OpenAICompatibleChat)
 
 __all__ = ["AdapterSet", "Capability", "build_adapters", "register_adapter", "registered_adapters"]

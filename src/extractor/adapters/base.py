@@ -31,6 +31,7 @@ class Capability(StrEnum):
     EXTRACTION = "extraction"
     INTERPRETATION = "interpretation"
     VERIFICATION = "verification"
+    ESCALATION = "escalation"  # a stronger chat model that only recovery (S12) may ask
 
 
 class ModelIdentity(StrictModel):
@@ -143,6 +144,12 @@ class ExtractorAdapter(Adapter):
     @property
     def output_tokens(self) -> int:
         return self.capabilities.max_output_tokens or 1024
+
+    @property
+    def max_parallel(self) -> int:
+        """Calls this backend can serve at the same time. One local GPU: 1. A hosted API: several.
+        The scheduler never runs more tasks at once than this, whatever `execution.max_concurrency` says."""
+        return 1
 
     def count_tokens(self, text: str) -> int:
         """Default: a rough 4-characters-per-token estimate."""

@@ -9,7 +9,7 @@ from typing import Callable
 
 from ..artifacts.store import ArtifactStore
 from ..config.runtime import RuntimeConfig
-from .fakes import FakeInterpreter
+from .fakes import FakeInterpreter, FakeVerifier
 from .base import (
     Adapter,
     AdapterContext,
@@ -45,13 +45,28 @@ class AdapterSet:
     extractor: ExtractorAdapter
     interpreter: InterpreterAdapter
     verifier: VerifierAdapter
+    escalator: ExtractorAdapter | None = None  # `models.escalation`; None or a fake = recovery cannot escalate
 
     @property
     def interpretation_model(self) -> ExtractorAdapter:
         """The model S08 talks to: `models.interpretation`, or the extraction model while that one is left as `fake`."""
         return self.extractor if isinstance(self.interpreter, FakeInterpreter) else self.interpreter
 
+    @property
+    def escalation_model(self) -> ExtractorAdapter | None:
+        """The stronger model recovery may ask, or None when `models.escalation` is left as `fake`."""
+        return None if self.escalator is None or self.escalator.identity.name == "fake" else self.escalator
+
+    def chat_models(self) -> list[ExtractorAdapter]:
+        """Every generative model a run may call (the scheduler takes the smallest `max_parallel` of them)."""
+        return [self.extractor, self.interpretation_model, *([] if isinstance(self.verifier, FakeVerifier) else [self.verifier])]
+
     def all(self) -> dict[Capability, Adapter]:
+        if self.escalator is not None:
+            return {**self._core(), Capability.ESCALATION: self.escalator}
+        return self._core()
+
+    def _core(self) -> dict[Capability, Adapter]:
         return {
             Capability.PARSING: self.parser,
             Capability.EMBEDDING: self.embedder,
@@ -86,4 +101,5 @@ def build_adapters(config: RuntimeConfig, store: ArtifactStore | None = None) ->
         extractor=_build(Capability.EXTRACTION, config, context),
         interpreter=_build(Capability.INTERPRETATION, config, context),
         verifier=_build(Capability.VERIFICATION, config, context),
+        escalator=_build(Capability.ESCALATION, config, context),
     )

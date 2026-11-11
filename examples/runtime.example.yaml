@@ -137,3 +137,29 @@ parsing:                             # S03 routing thresholds
 
 storage:
   artifact_dir: .extractor_artifacts
+
+# --- how a run is carried out (never what it decides) ------------------------------------------
+execution:
+  max_concurrency: 1                 # tasks of one dependency layer side by side; capped by the model's own max_parallel
+                                     # (ollama_chat: 1, openai_compatible_chat: 4; set `max_parallel` in the model params)
+  max_recovery_attempts: 2           # S12: recovery tries per task (0 = no recovery)
+  # max_seconds_per_task: 300        # S12: no new recovery attempt once a task used this much model time
+  cache_model_calls: true            # a call that already gave a usable answer is not made again (resume, cheap re-measurement)
+  retry_pause_seconds: 2             # pause before re-sending a call that failed in transport
+  skip_blocked_dependents: true      # a task whose depends_on was not accepted is not sent to the model
+
+# --- S12: bounded, targeted second tries for tasks that were not accepted ----------------------
+recovery:
+  enabled: true
+  actions: [retry_call, widen_evidence, rediscover]   # these COMPLETE an inspection. Measure before adding:
+                                                      #   refield, deepen, escalate_model  (python -m extractor eval --recovery)
+  max_calls: 6                       # extra model calls per task
+  max_seconds: 180                   # extra model seconds per task
+  # evidence_budget_factor: 2.0      # widen_evidence
+  # deeper_profile: {light: standard, standard: deep}   # deepen
+  # rediscover_margin_blocks: 2
+
+# models:
+#   escalation:                      # a stronger model that ONLY recovery may ask (needs `escalate_model` in recovery.actions)
+#     name: openai_compatible_chat
+#     params: {base_url: ..., model: ..., api_key_env: ...}

@@ -223,6 +223,10 @@ def create_app(workspace_dir: Path) -> FastAPI:
     def corpus_records(body: CorpusRecordsBody):
         return ws.corpus_records(body.tags, body.cases, body.tasks)
 
+    @app.post("/api/corpus/recovery")
+    def corpus_recovery(body: CorpusExtractBody):
+        return ws.corpus_recovery(body.kinds, body.tags, body.cases)
+
     @app.post("/api/corpus/parsing")
     def corpus_parsing():
         return ws.corpus_parsing()

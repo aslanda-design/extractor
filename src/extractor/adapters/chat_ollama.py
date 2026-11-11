@@ -37,13 +37,19 @@ class OllamaChat(ExtractorAdapter):
         think: bool = False,
         thinking_tokens: int = 4096,
         timeout: float = 600.0,
+        max_parallel: int = 1,
         keep_alive: str = "10m",
     ):
         super().__init__(context)
+        self._max_parallel = max(1, max_parallel)
         self.model_name, self.base_url = model, base_url.rstrip("/")
         self._context_tokens, self._max_output = context_tokens, max_output_tokens
         self.temperature, self.seed, self.think = temperature, seed, think
         self.timeout, self.keep_alive, self.thinking_tokens = timeout, keep_alive, thinking_tokens
+
+    @property
+    def max_parallel(self) -> int:
+        return self._max_parallel
 
     @property
     def identity(self) -> ModelIdentity:
@@ -71,18 +77,18 @@ class OllamaChat(ExtractorAdapter):
         try:
             answer = post_json(f"{self.base_url}/api/chat", body, {}, self.timeout)
         except ChatError as e:
-            return ModelReply(error=str(e), seconds=round(time.time() - started, 2))
+            return ModelReply(error=str(e), failure="transport", seconds=round(time.time() - started, 2))
         raw = (answer.get("message") or {}).get("content") or ""
         reply = ModelReply(raw=raw, seconds=round(time.time() - started, 2),
                            prompt_tokens=answer.get("prompt_eval_count"), completion_tokens=answer.get("eval_count"))
         used = (reply.prompt_tokens or 0) + (reply.completion_tokens or 0)
         if reply.prompt_tokens and reply.prompt_tokens >= self._context_tokens - 8:
             return reply.model_copy(update={"error": f"the prompt filled the whole context window ({self._context_tokens} "
-                                                      "tokens): evidence was probably cut off; raise context_tokens"})
+                                                      "tokens): evidence was probably cut off; raise context_tokens", "failure": "context_full"})
         if answer.get("done_reason") == "length":
             return reply.model_copy(update={"error": f"the answer was cut off at {budget} tokens "
-                                                      f"after {used} tokens; raise models.extraction.params.max_output_tokens"})
+                                                      f"after {used} tokens; raise models.extraction.params.max_output_tokens", "failure": "truncated"})
         try:
             return reply.model_copy(update={"data": read_json_object(raw)})
         except ValueError as e:
-            return reply.model_copy(update={"error": f"invalid JSON from the model: {e}"})
+            return reply.model_copy(update={"error": f"invalid JSON from the model: {e}", "failure": "invalid_json"})

@@ -48,7 +48,10 @@ from extractor.indexing.report import write_index_report
 from extractor.indexing.stores import registered_stores
 from extractor.parsing.backends.pdfium_renderer import PdfiumRenderer
 from extractor.parsing.report import write_report
-from extractor.pipeline import index_documents, plan_only, run_pipeline
+from extractor.pipeline import index_documents, plan_only, run_pipeline_report
+from extractor.evaluation.recovery_eval import evaluate_recovery
+from extractor.execution import execution_scope
+from extractor.config.runtime import RECOVERY_ACTIONS
 from extractor.retrieval.retrieval_pipeline import gather_evidence
 from extractor.retrieval.types import RetrievalRequest, RetrievalTools, request_from_field, request_from_task
 from extractor.scope import DocumentRequest, ManifestError, build_manifest
@@ -129,7 +132,9 @@ class Workspace:
                 emit("ui", "another job is running; waiting for it to finish", "warn")
             with self._lock:
                 self._job_started = True
-                yield
+                # one execution scope per job: finished model calls are read from the call cache, every call is metered
+                with execution_scope(self.store, self.get_config().execution):
+                    yield
 
     def logs(self, since: int = 0, run: str | None = None) -> dict:
         """Engine events newer than `since` (the Logs tab polls this)."""
@@ -182,6 +187,8 @@ class Workspace:
                 "interpretation": registered_adapters(Capability.INTERPRETATION),
                 "verification": registered_adapters(Capability.VERIFICATION),
                 "acceptance_profiles": ["strict", "standard", "lenient"],
+                "escalation": registered_adapters(Capability.ESCALATION),
+                "recovery_actions": list(RECOVERY_ACTIONS),
                 "embedding": registered_adapters(Capability.EMBEDDING),
                 "reranking": registered_adapters(Capability.RERANKING),
                 "stores": registered_stores(),
@@ -580,10 +587,11 @@ class Workspace:
         with self._job(f"Run {spec_name} on {len(documents)} document(s)"):
             adapters = build_adapters(config, self.store)
             indexed = index_documents(manifest, adapters, config, self.store)  # S03 + S04 (cached)
-            results = run_pipeline(spec, manifest, adapters, config, indexed, store=self.store)
+            report = run_pipeline_report(spec, manifest, adapters, config, indexed, store=self.store)  # S05-S13, recovery included
         return {
             "manifest": manifest.model_dump(mode="json"),
-            "results": [r.model_dump(mode="json") for r in results],
+            "results": [r.model_dump(mode="json") for r in report.results],
+            "summary": report.summary.model_dump(mode="json"),  # calls, tokens, seconds, recovery: what the run cost
         }
 
     @recorded("plan")
@@ -721,6 +729,24 @@ class Workspace:
         return {"scores": [{**s.model_dump(mode="json"), "recall": s.recall, "precision": s.precision} for s in report.scores],
                 "totals": report.totals(), "saved_to": str(saved),
                 "causes": [c.model_dump(mode="json") for c in attribute_records(saved)]}
+
+    @recorded("corpus.recovery")
+    def corpus_recovery(self, kinds: list[str] | None = None, tags: list[str] | None = None, cases: list[str] | None = None) -> dict:
+        """S12 measure: the whole engine on the labeled cases; what recovery rescued, what it harmed and what each rescue cost."""
+        corpus = load_corpus(CORPUS_DIR)
+        if not corpus.cases:
+            raise UiError("the corpus has no cases yet; add some under evaluation/corpus/")
+        config = self.get_config()
+        with self._job("Measure recovery"):
+            _, adapters = self._builder(config)
+            saved = self.store.root / "evals" / time.strftime("recovery-%Y%m%d-%H%M%S")
+            try:
+                report = evaluate_recovery(corpus, config, adapters, self.store, None, [TaskKind(k) for k in kinds or []] or None,
+                                           tags or None, cases or None, save_dir=saved)
+            except ValueError as exc:
+                raise UiError(str(exc))
+        return {**report.model_dump(mode="json"), "saved_to": str(saved), "enabled": config.recovery.enabled,
+                "allowed": list(config.recovery.actions)}
 
     @recorded("corpus.parsing")
     def corpus_parsing(self) -> dict:

@@ -62,5 +62,4 @@ node_modules/
 # --- Kept out of the repo by choice ------------------------------------------------------------
 PROGRESS.md
 tests/
-architecture.md
 docs/

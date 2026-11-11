@@ -87,7 +87,9 @@ def headline(kind: str, result: dict | None) -> str:
             counts: dict[str, int] = {}
             for x in r["results"]:
                 counts[x["status"]] = counts.get(x["status"], 0) + 1
-            return ", ".join(f"{n} {s}" for s, n in counts.items()) or "no tasks"
+            cost = r.get("summary") or {}
+            extra = (f" · {cost['total']['calls']} call(s), {cost['seconds']:.0f}s" + (f", {cost['recovered']} recovered" if cost.get("recovered") else "")) if cost else ""
+            return (", ".join(f"{n} {s}" for s, n in counts.items()) or "no tasks") + extra
         if kind == "plan":
             tasks, calls = len(r["tasks"]), len(r["plan"]["batches"])
             return f"{tasks} task(s) in {calls} call(s), {len(r['plan']['overlaps'])} pair(s) share evidence"
@@ -99,6 +101,9 @@ def headline(kind: str, result: dict | None) -> str:
             return f"quote recall {_pct(r['quote_recall'])}, right page {_pct(r['page_accuracy'])}"
         if kind == "corpus.indexing":
             return f"quotes in one passage {_pct(r['containment'])}"
+        if kind == "corpus.recovery":
+            rescues, harm = sum(a["rescues"] for a in r["actions"]), sum(a["harm"] for a in r["actions"])
+            return f"{r['tasks']} task(s): {rescues} rescued, {harm} harmed, {r['calls_recovery']} of {r['calls_total']} call(s) spent on recovery"
         if kind == "corpus.records":
             t = r["totals"]
             return (f"{t['tasks']} task(s): record recall {_pct(t['recall'])}, precision {_pct(t['precision'])}, "

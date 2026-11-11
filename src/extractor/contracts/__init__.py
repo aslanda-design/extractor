@@ -35,7 +35,7 @@ from .manifest import DocumentEntry, DocumentManifest, DocumentRelationship, Sco
 from .plan import Batch, EvidenceOverlap, ExtractionPlan
 from .passage import Continuation, IndexedDocument, Passage, PassageSegment, Reference
 from .record import FieldResult, Record
-from .result import EvidenceLink, ExecutionMetadata, TaskResult
+from .result import EvidenceLink, ExecutionMetadata, RecoveryAttempt, RunReport, RunSummary, StageCost, TaskResult
 from .specification import CompiledSpecification, SpecificationFile, SpecIssue
 from .task import TaskSpecification
 from .validation import AcceptanceDecision, Category, RecoveryHint, ValidationFinding, ValidationReport
@@ -45,7 +45,7 @@ __all__ = [
     "SourceRef", "StrictModel", "TaskKind", "TaskStatus", "CoverageEntry", "CoverageLedger",
     "CoverageState", "DocumentRepresentation", "ParsingIssue", "SourceBlock", "EvidenceItem",
     "EvidencePackage", "DocumentEntry", "DocumentManifest", "DocumentRelationship", "Scope",
-    "FieldResult", "Record", "EvidenceLink", "ExecutionMetadata", "TaskResult",
+    "FieldResult", "Record", "EvidenceLink", "ExecutionMetadata", "TaskResult", "RecoveryAttempt", "RunReport", "RunSummary", "StageCost",
     "CompiledSpecification", "SpecificationFile", "SpecIssue", "TaskSpecification",
     "AcceptanceDecision", "Category", "RecoveryHint", "ValidationFinding", "ValidationReport", "Continuation", "IndexedDocument", "Passage",
     "PassageSegment", "Reference", "EvidenceOrigin", "EvidencePassage", "RetrievalTrace", "Batch", "EvidenceOverlap", "ExtractionPlan",

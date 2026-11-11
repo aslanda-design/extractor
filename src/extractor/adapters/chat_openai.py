@@ -41,16 +41,22 @@ class OpenAICompatibleChat(ExtractorAdapter):
         temperature: float = 0.0,
         seed: int | None = 0,
         timeout: float = 300.0,
+        max_parallel: int = 4,
         extra_body: dict | None = None,
         encoding: str = "cl100k_base",
     ):
         super().__init__(context)
+        self._max_parallel = max(1, max_parallel)
         self.base_url, self.model_name, self.api_key_env = base_url.rstrip("/"), model, api_key_env
         self._context_tokens, self._max_output = context_tokens, max_output_tokens
         self.temperature, self.seed, self.timeout = temperature, seed, timeout
         self.extra_body, self.encoding = extra_body or {}, encoding
         self._tokenizer = None
         self._schema_supported = True  # flips to False if the server rejects json_schema
+
+    @property
+    def max_parallel(self) -> int:
+        return self._max_parallel
 
     @property
     def identity(self) -> ModelIdentity:
@@ -106,7 +112,7 @@ class OpenAICompatibleChat(ExtractorAdapter):
                 self._schema_supported = False  # the server does not know json_schema: ask in words
                 answer = self._call(prompt, False)
         except ChatError as e:
-            return ModelReply(error=str(e), seconds=time.time() - started)
+            return ModelReply(error=str(e), failure="transport", seconds=time.time() - started)
         choice = answer["choices"][0]
         raw = choice["message"].get("content") or ""
         usage = answer.get("usage") or {}
@@ -114,8 +120,8 @@ class OpenAICompatibleChat(ExtractorAdapter):
                            prompt_tokens=usage.get("prompt_tokens"), completion_tokens=usage.get("completion_tokens"))
         if choice.get("finish_reason") == "length":
             return reply.model_copy(update={"error": "the answer was cut off at max_output_tokens "
-                                                      f"({self._max_output}); raise models.extraction.params.max_output_tokens"})
+                                                      f"({self._max_output}); raise models.extraction.params.max_output_tokens", "failure": "truncated"})
         try:
             return reply.model_copy(update={"data": read_json_object(raw)})
         except ValueError as e:
-            return reply.model_copy(update={"error": f"invalid JSON from the model: {e}"})
+            return reply.model_copy(update={"error": f"invalid JSON from the model: {e}", "failure": "invalid_json"})

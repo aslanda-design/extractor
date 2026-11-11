@@ -55,6 +55,20 @@ class FoundRecord:
 
 
 @dataclass
+class DocumentRead:
+    """Everything S09 knows about ONE document: kept so recovery (S12) can read a region again and rebuild from here."""
+
+    document: IndexedDocument
+    tagged: list
+    scope: Scope
+    discovery: Discovery
+    records: list[FoundRecord] = field(default_factory=list)
+    findings: list[ValidationFinding] = field(default_factory=list)
+    calls: list[ModelCall] = field(default_factory=list)
+    log: list[str] = field(default_factory=list)
+
+
+@dataclass
 class RecordsOutcome:
     records: list[FoundRecord] = field(default_factory=list)
     findings: list[ValidationFinding] = field(default_factory=list)
@@ -64,6 +78,7 @@ class RecordsOutcome:
     windows: int = 0
     discovery_failed: bool = False  # every discovery window of every document failed: nothing was read
     log: list[str] = field(default_factory=list)
+    documents: list[DocumentRead] = field(default_factory=list)  # the per-document state behind the flat lists above
 
 
 def rejection_findings(task_id: str, rejected, tagged) -> list[ValidationFinding]:
@@ -86,62 +101,92 @@ def extract_records(
     ledger: CoverageLedger | None = None,
 ) -> RecordsOutcome:
     settings = config.records
-    out = RecordsOutcome()
     model = adapters.extractor
-    read_any = False
+    reads: list[DocumentRead] = []
+    skipped: list[str] = []
     for document in documents:
         blocks = document.representation.blocks
         if not blocks:
-            out.log.append(f"{document.document_id}: no blocks (nothing was parsed)")
+            skipped.append(f"{document.document_id}: no blocks (nothing was parsed)")
             continue
-        read_any = True
         tagged = tag_blocks(blocks)
 
         # 1. Scope: which blocks may hold the records?
         scope: Scope = find_scope(task, tagged, model, settings)
-        out.calls += scope.calls
-        out.scopes.append(f"{document.document_id}: {scope.how}")
-        out.scope_texts.append(" ".join(t.block.text for t in tagged[scope.first:scope.last + 1]))
         emit("S09", f"{task.id}: scope {scope.how}", "warn" if scope.fell_back else "info")
 
         # 2. Discover the boundaries over the whole scope (window by window).
         discovery: Discovery = discover(task, tagged, scope, model, settings)
-        out.calls += discovery.calls
-        out.windows += discovery.windows
-        out.discovery_failed = out.discovery_failed or (discovery.windows > 0 and len(discovery.failed_windows) == discovery.windows)
 
-        # 3 + 4 + 6. Positions, identity, duplicates: from what the model reported to records with exact spans.
-        found, duplicates = reconcile(discovery.found, tagged)
+        # 3-7. From what the model reported to records with fields, then the audit.
+        reads.append(read_document(task, document, tagged, scope, discovery, adapters, config, profile, scorer=scorer, ledger=ledger))
+    return assemble(reads, skipped)
 
-        # 2a. Sub-items of a listed record are part of it, not records of their own ("3.1" under "3").
-        nested = nested_keys([f.key for f in found])
-        out.findings += [finding(ValidationLayer.RECORD_COMPLETENESS, Category.RECORD_REJECTED,
-                                 f"'{f.key}' is a sub-item of another listed record, not a record of its own", task.id) for i, f in enumerate(found) if i in nested]
-        found = [f for i, f in enumerate(found) if i not in nested]
 
-        # 2b. A second look: entries that do not match the record definition leave the collection (and are reported).
-        rejected = reject_non_records(task, found, tagged, model, settings)
-        found = rejected.kept
-        if rejected.call:
-            out.calls.append(rejected.call)
-        out.findings += rejection_findings(task.id, rejected, tagged)
-        out.findings += [finding(ValidationLayer.RECORD_COMPLETENESS, Category.RECORD_REJECTED, why, task.id) for why in discovery.wandered]
-        spans = build_spans(document.document_id, task.id, found, tagged)
-        out.log.append(f"{document.document_id}: {len(discovery.found)} record report(s) -> {len(spans)} record(s)"
-                       + (f"; duplicate key: {', '.join(duplicates)}" if duplicates else ""))
+def read_document(
+    task: TaskSpecification, document: IndexedDocument, tagged: list, scope: Scope, discovery: Discovery,
+    adapters: AdapterSet, config: RuntimeConfig, profile: str | None = None, *,
+    scorer: Scorer | None = None, ledger: CoverageLedger | None = None, previous: list[FoundRecord] | None = None,
+) -> DocumentRead:
+    """Steps 3 to 7 for one document, from a discovery. `previous` are the records of an earlier read of the same document:
+    a record whose span did not change keeps its fields (recovery reads a region again without paying for the rest)."""
+    settings = config.records
+    read = DocumentRead(document=document, tagged=tagged, scope=scope, discovery=discovery, calls=[*scope.calls, *discovery.calls])
 
-        # 5. Fields of each record, from the record's own text.
-        for n, span in enumerate(spans, start=1):
-            passage = as_passage(span, document.document_id, tagged)
-            outcomes = extract_fields(task, span.record_id, passage, as_evidence(passage), document, adapters, config, profile, scorer, ledger)
-            out.calls += [c for o in outcomes for c in o.calls]
-            record = Record(record_id=span.record_id, key=span.key, text=span.text, block_ids=span.block_ids,
-                            fields=[o.result for o in outcomes])
-            out.records.append(FoundRecord(record, span, outcomes))
-            progress("S09", n, len(spans), f"records of {task.id} have their fields")
+    # 3 + 4 + 6. Positions, identity, duplicates: from what the model reported to records with exact spans.
+    found, duplicates = reconcile(discovery.found, tagged)
 
-        # 7. Audit: was the whole scope accounted for?
-        out.findings += audit(task.id, document, tagged, scope, discovery, spans, duplicates, settings.check_numbering)
-    if not read_any:  # nothing parsed is not "no records": it is "nothing was read"
-        out.discovery_failed = True
+    # 2a. Sub-items of a listed record are part of it, not records of their own ("3.1" under "3").
+    nested = nested_keys([f.key for f in found])
+    read.findings += [finding(ValidationLayer.RECORD_COMPLETENESS, Category.RECORD_REJECTED,
+                              f"'{f.key}' is a sub-item of another listed record, not a record of its own", task.id) for i, f in enumerate(found) if i in nested]
+    found = [f for i, f in enumerate(found) if i not in nested]
+
+    # 2b. A second look: entries that do not match the record definition leave the collection (and are reported).
+    rejected = reject_non_records(task, found, tagged, adapters.extractor, settings)
+    found = rejected.kept
+    if rejected.call:
+        read.calls.append(rejected.call)
+    read.findings += rejection_findings(task.id, rejected, tagged)
+    read.findings += [finding(ValidationLayer.RECORD_COMPLETENESS, Category.RECORD_REJECTED, why, task.id) for why in discovery.wandered]
+    spans = build_spans(document.document_id, task.id, found, tagged)
+    read.log.append(f"{document.document_id}: {len(discovery.found)} record report(s) -> {len(spans)} record(s)"
+                    + (f"; duplicate key: {', '.join(duplicates)}" if duplicates else ""))
+
+    # 5. Fields of each record, from the record's own text.
+    known = {(r.span.record_id, r.span.text): r for r in previous or []}
+    for n, span in enumerate(spans, start=1):
+        same = known.get((span.record_id, span.text))
+        if same is not None:  # read before, unchanged: its fields stand
+            read.records.append(FoundRecord(same.record, span, same.outcomes))
+            continue
+        passage = as_passage(span, document.document_id, tagged)
+        outcomes = extract_fields(task, span.record_id, passage, as_evidence(passage), document, adapters, config, profile, scorer, ledger)
+        read.calls += [c for o in outcomes for c in o.calls]
+        read.records.append(FoundRecord(make_record(span, outcomes), span, outcomes))
+        progress("S09", n, len(spans), f"records of {task.id} have their fields")
+
+    # 7. Audit: was the whole scope accounted for?
+    read.findings += audit(task.id, document, tagged, scope, discovery, spans, duplicates, settings.check_numbering)
+    return read
+
+
+def make_record(span: Span, outcomes: list[FieldOutcome]) -> Record:
+    return Record(record_id=span.record_id, key=span.key, text=span.text, block_ids=span.block_ids, fields=[o.result for o in outcomes])
+
+
+def assemble(reads: list[DocumentRead], skipped: list[str] | None = None) -> RecordsOutcome:
+    """The flat outcome of a task from its per-document reads."""
+    out = RecordsOutcome(documents=reads, log=list(skipped or []))
+    for read in reads:
+        out.records += read.records
+        out.findings += read.findings
+        out.calls += read.calls
+        out.windows += read.discovery.windows
+        out.scopes.append(f"{read.document.document_id}: {read.scope.how}")
+        out.scope_texts.append(" ".join(t.block.text for t in read.tagged[read.scope.first:read.scope.last + 1]))
+        out.log += read.log
+    windows = [r.discovery for r in reads if r.discovery.windows > 0]
+    # nothing parsed is not "no records": it is "nothing was read". Same when every window of a document failed.
+    out.discovery_failed = not reads or any(len(d.failed_windows) == d.windows for d in windows)
     return out

@@ -218,7 +218,7 @@ tr.dim td{color:var(--muted)}
 <section id="run">
   <div class="card">
     <h2>Run the engine</h2>
-    <div class="msg warn">Value tasks now run retrieval and extraction (S06, S07). Nothing is validated or accepted yet (phases 6+), so a value the model found appears under <b>uncertain</b> as a proposal; interpretation and records tasks still return <b>failed</b> by design. Needs the extraction model configured in Settings.</div>
+    <div class="msg">The whole engine: evidence, extraction (value, interpretation and records tasks), validation, acceptance and bounded recovery (S01-S13). Only an answer the acceptance policy accepts is <b>supported</b>; a value that was found but not accepted is shown as <i>proposed</i>. Finished model calls are read from the call cache, so running again after a failure repeats only what is missing. Needs the extraction model configured in Settings.</div>
     <div class="row" style="margin:10px 0">
       <label>Spec <select id="runSpec"></select></label>
       <button class="btn" id="runBtn">Run</button>
@@ -285,6 +285,7 @@ tr.dim td{color:var(--muted)}
       <button class="btn" id="corpusExtract">Measure value extraction</button>
       <label title="Runs the extraction measure twice on the same evidence: one call per task (off) and tasks that share evidence sharing a call (auto). Lists every task whose result changed."><input type="checkbox" id="corpusCompare"> compare grouping (off vs auto)</label>
       <button class="btn" id="corpusAccept">Measure acceptance</button>
+      <button class="btn" id="corpusRecover" title="Runs the WHOLE engine on the selected projects with recovery as set in Settings, and says what each recovery action rescued, harmed and cost.">Measure recovery</button>
       <button class="btn" id="corpusRecords" title="Runs S09 on every records task: finds the records of the whole scope and extracts their fields (many model calls: slow).">Measure records</button></div>
     <div id="corpusResult" style="margin-top:12px"></div>
     <div id="corpusHistory" style="margin-top:18px"></div>
@@ -495,8 +496,30 @@ function renderRun(r) {
         <td><code>${esc(x.task_id)}</code></td><td>${esc(x.kind)}</td><td>${pill(x.status, kind(x.status))}</td>
         <td>${x.kind === 'records' ? esc(x.records.length + ' record(s) · ' + x.completeness) : x.value != null ? esc(JSON.stringify(x.value)) : x.alternatives.length ? '<i>proposed:</i> ' + esc(x.alternatives.map(a => JSON.stringify(a)).join(' | ')) : '—'}</td>
         <td>${esc(x.diagnostics.join(' · '))}</td></tr>`).join('')}</tbody></table>
+      ${runSummary(r.summary)}
+      ${r.results.filter(x => (x.recovery || []).length).map(recoveryTrail).join('')}
       ${r.results.filter(x => x.kind === 'records').map(recordsDetail).join('')}
       <details style="margin-top:12px"><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+}
+function runSummary(s) {
+  if (!s) return '';
+  const row = (name, c) => `<tr><td>${esc(name)}</td><td>${c.calls}</td><td>${c.cached}</td><td>${c.failed}</td><td>${c.prompt_tokens + c.completion_tokens}</td><td>${c.seconds.toFixed(1)}</td></tr>`;
+  return `<div class="card" style="margin-top:12px"><h2>What the run cost</h2>
+    <p>${s.seconds.toFixed(1)} s in all (${Object.entries(s.phase_seconds).map(([k, v]) => esc(k) + ' ' + v.toFixed(1) + ' s').join(' · ')}) ·
+      <b>${s.total.calls}</b> model call(s), ${s.total.cached} read from the call cache, ${s.total.failed} failed ·
+      ${s.recovery_attempts} recovery attempt(s), <b>${s.recovered}</b> task(s) improved · up to ${s.concurrency} task(s) at once</p>
+    <details><summary>By stage and by task</summary><table><thead><tr><th>Stage / task</th><th>Model calls</th><th>From cache</th><th>Failed</th><th>Tokens</th><th>Model seconds</th></tr></thead><tbody>
+      ${Object.entries(s.stages).map(([k, c]) => row(k + (STAGES[k] ? ' ' + STAGES[k] : ''), c)).join('')}
+      ${Object.entries(s.tasks).map(([k, c]) => row(k, c)).join('')}</tbody></table></details></div>`;
+}
+function recoveryTrail(x) {
+  const v = a => a == null ? '' : typeof a === 'string' ? a : JSON.stringify(a);
+  return `<div class="card" style="margin-top:12px"><h2><code>${esc(x.task_id)}</code> · recovery (S12)</h2>
+    <p class="hint">Every attempt changes something, runs extraction and validation again, and is kept only if its result is better.</p>
+    <table><thead><tr><th>Action</th><th>Because</th><th>What changed</th><th>Before → after</th><th>Proposed</th><th>Result</th><th>Calls</th><th>Sec</th></tr></thead><tbody>${x.recovery.map(a => `<tr>
+      <td><code>${esc(a.action)}</code></td><td><small>${esc(a.reason)}</small></td><td><small>${esc(a.change)}</small></td>
+      <td>${esc(a.status_before)} → ${esc(a.status_after)}</td><td><small>${esc(v(a.value_after))}</small></td>
+      <td>${pill(a.kept ? 'kept' : 'not kept', a.kept ? 'ok' : 'warn')} <small>${esc(a.why)}</small></td><td>${a.calls}</td><td>${a.seconds.toFixed(1)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function recordsDetail(x) {
   const fieldIds = [...new Set(x.records.flatMap(rec => rec.fields.map(f => f.field_id)))];
@@ -618,6 +641,30 @@ function acceptanceForm(a, opts) {
     ['min_tasks', 'min_accepted_precision', 'max_false_absence_rate'].map(k => `<label>${k}<input data-acq="${k}" type="number" step="any" value="${q[k]}"><small>${ACCEPT_HELP[k]}</small></label>`).join('');
 }
 const jsonText = o => JSON.stringify(o ?? {});
+const GEN_HELP = {
+  'execution.max_concurrency': 'tasks of one dependency layer that may run side by side; capped by the model\'s own max_parallel (a local GPU: 1)',
+  'execution.max_recovery_attempts': 'S12: recovery tries per task (0 = no recovery)',
+  'execution.max_seconds_per_task': 'S12: no new recovery attempt once a task used this much model time (empty = only recovery.max_seconds)',
+  'execution.cache_model_calls': 'a call that already gave a usable answer is read from the store, not made again (resume after a crash, cheap re-measurement)',
+  'execution.retry_pause_seconds': 'pause before re-sending a call that failed in transport',
+  'execution.skip_blocked_dependents': 'a task whose depends_on was not accepted is not sent to the model',
+  'recovery.enabled': 'S12: bounded second tries for tasks that were not accepted',
+  'recovery.actions': 'allowed actions, comma separated: retry_call, widen_evidence, rediscover (complete an inspection: on) · refield, deepen, escalate_model (change how the answer is made: measure first)',
+  'recovery.max_calls': 'extra model calls recovery may spend on one task',
+  'recovery.max_seconds': 'extra model seconds recovery may spend on one task',
+  'recovery.evidence_budget_factor': 'widen_evidence: the evidence token budget is multiplied by this',
+  'recovery.deeper_profile': 'deepen: the next depth after each profile (JSON)',
+  'recovery.rediscover_margin_blocks': 'rediscover: blocks read on each side of the region the audit named',
+  'records.verify_fields': 'S07 candidate verification for record fields (off: saves 2 of 3 calls)',
+  'records.verify_discovery': 'a model check of the listed records (off: it rejected real records on the corpus)',
+  'records.scope_min_windows': 'documents needing fewer discovery windows are read whole',
+};
+// one setting of a simple section (execution / recovery / records): the input follows the type of the current value
+const gen = (section, k, v) => { const id = section + '.' + k, help = GEN_HELP[id] || '';
+  return typeof v === 'boolean' ? `<label>${id}<select data-gen="${id}" data-t="bool"><option ${v ? 'selected' : ''} value="true">yes</option><option ${v ? '' : 'selected'} value="false">no</option></select><small>${help}</small></label>`
+    : Array.isArray(v) ? `<label>${id}<input data-gen="${id}" data-t="list" value="${esc(v.join(', '))}"><small>${help}</small></label>`
+    : v !== null && typeof v === 'object' ? `<label>${id} (JSON)<input data-gen="${id}" data-t="json" value="${esc(JSON.stringify(v))}"><small>${help}</small></label>`
+    : `<label>${id}<input data-gen="${id}" data-t="num" type="number" step="any" value="${v ?? ''}" ${v == null ? 'placeholder="not set"' : ''}><small>${help}</small></label>`; };
 async function loadConfig() {
   cfg = await api('/config'); const opts = await api('/options');
   const sel = (id, label, names, cur) => `<label>${label}<select id="${id}">${names.map(n => `<option ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>`;
@@ -657,7 +704,10 @@ async function loadConfig() {
     `<label>lexical store params (JSON)<input id="cfgLexParams" value="${esc(jsonText(cfg.indexing.lexical_store.params))}"></label>` +
     sel('cfgVecName', 'vector store', opts.stores.vector, cfg.indexing.vector_store.name) +
     `<label>vector store params (JSON)<input id="cfgVecParams" value="${esc(jsonText(cfg.indexing.vector_store.params))}"></label>` +
-    Object.entries(cfg.indexing.chunking).map(([k, v]) => ck(k, v)).join('');
+    Object.entries(cfg.indexing.chunking).map(([k, v]) => ck(k, v)).join('') +
+    sel('cfgEscName', 'escalation model adapter (S12 only; fake = recovery never escalates)', opts.escalation, cfg.models.escalation.name) +
+    `<label>escalation model params (JSON)<input id="cfgEscParams" value="${esc(jsonText(cfg.models.escalation.params))}"><small>a stronger model that only recovery may ask, and only when "escalate_model" is among the allowed actions</small></label>` +
+    ['execution', 'recovery', 'records'].map(section => Object.entries(cfg[section]).map(([k, v]) => gen(section, k, v)).join('')).join('');
   const p = cfg.parsing, params = cfg.models.parsing.params || {};
   const field = (k, v) => typeof v === 'boolean'
     ? `<label>${k}<select data-k="${k}"><option ${v ? 'selected' : ''} value="true">yes</option><option ${v ? '' : 'selected'} value="false">no</option></select><small>${PARSE_HELP[k] || ''}</small></label>`
@@ -696,6 +746,11 @@ $('#cfgSave').onclick = async () => {
   });
   try {
     const parse = id => JSON.parse($(id).value || '{}');
+    document.querySelectorAll('#idxForm [data-gen]').forEach(el => {
+      const [section, k] = el.dataset.gen.split('.'), t = el.dataset.t, v = el.value;
+      next[section][k] = t === 'bool' ? v === 'true' : t === 'list' ? v.split(',').map(x => x.trim()).filter(Boolean) : t === 'json' ? JSON.parse(v || '{}') : v === '' ? null : Number(v);
+    });
+    next.models.escalation = {name: $('#cfgEscName').value, params: parse('#cfgEscParams')};
     next.models.embedding = {name: $('#cfgEmbName').value, params: parse('#cfgEmbParams')};
     next.models.reranking = {name: $('#cfgRerName').value, params: parse('#cfgRerParams')};
     next.models.extraction = {name: $('#cfgExtName').value, params: parse('#cfgExtParams')};
@@ -895,6 +950,20 @@ CORPUS_RENDER.records = r => {
     ${r.causes.length ? `<h2 style="margin-top:14px">Why the problems happen (${r.causes.length})</h2><table><thead><tr><th>Business id</th><th>Field id</th><th>What</th><th>Stage</th><th>Can it be fixed?</th></tr></thead><tbody>${r.causes.map(c => `<tr>
       <td>${esc(c.case_id)}</td><td><code>${esc(c.task_id)}</code></td><td><small>${esc(c.what)}</small></td><td>${pill(c.cause.replace(/_/g, ' '), kind[c.cause] || '')}</td><td><small>${esc(c.fixable)}</small></td></tr>`).join('')}</tbody></table>` : '<div class="msg ok">No problems to explain.</div>'}`;
 };
+CORPUS_RENDER.recovery = r => {
+  const acc = c => (c.accepted_correct || 0) + (c.false_accept || 0), pct = (n, d) => d ? Math.round(100 * n / d) + '%' : 'n/a';
+  const line = (name, c) => `<tr><td>${name}</td><td>${pct(acc(c), r.tasks)}</td><td>${pct(c.accepted_correct || 0, acc(c))}</td><td>${c.false_accept || 0}</td><td>${c.false_absence || 0}</td><td>${c.failed || 0}</td></tr>`;
+  const kind = {rescue: 'ok', harm: 'bad', neutral: ''};
+  return `<p><b>${r.tasks}</b> labeled task(s) · recovery ${r.enabled ? 'on' : '<b>off</b>'} · allowed actions: ${r.allowed.map(a => `<span class="chip">${esc(a)}</span>`).join(' ')} ·
+      recovery spent <b>${r.calls_recovery}</b> of ${r.calls_total} model call(s)</p>
+    <table><thead><tr><th></th><th>Automation</th><th>Accepted precision</th><th>False accepts</th><th>False absences</th><th>Failed</th></tr></thead><tbody>${line('before recovery', r.before)}${line('after recovery', r.after)}</tbody></table>
+    ${r.actions.length ? `<table style="margin-top:8px"><thead><tr><th>Action</th><th>Attempts</th><th>Kept</th><th>Rescues</th><th>Harm</th><th>Calls</th><th>Sec</th><th>Calls per rescue</th></tr></thead><tbody>${r.actions.map(a => `<tr>
+      <td><code>${esc(a.action)}</code></td><td>${a.attempts}</td><td>${a.kept}</td><td>${a.rescues}</td><td>${a.harm ? pill(a.harm, 'bad') : 0}</td><td>${a.calls}</td><td>${Math.round(a.seconds)}</td><td>${a.rescues ? (a.calls / a.rescues).toFixed(1) : '—'}</td></tr>`).join('')}</tbody></table>` : '<div class="msg ok">No task needed recovery, or no allowed action applied.</div>'}
+    <p class="hint">A <b>rescue</b> is a task that was not accepted and is now right. <b>Harm</b> is a false accept or a false absence the first attempt did not have. Keep an action on only if it rescues with no harm. Saved in <code>${esc(r.saved_to)}</code>.</p>
+    ${r.changed.length ? `<table><thead><tr><th>Business id</th><th>Field id</th><th>Split</th><th>Before → after</th><th>Actions</th><th>Kept</th><th>Calls</th><th></th></tr></thead><tbody>${r.changed.map(t => `<tr>
+      <td>${esc(t.case_id)}</td><td><code>${esc(t.task_id)}</code></td><td>${esc(t.split)}</td><td>${esc(t.before.replace(/_/g, ' '))} → ${esc(t.after.replace(/_/g, ' '))}</td>
+      <td><small>${esc(t.actions.join(', '))}</small></td><td><small>${esc(t.kept.join(', ') || 'none')}</small></td><td>${t.calls}</td><td>${pill(t.effect, kind[t.effect])} <small>${esc(t.note)}</small></td></tr>`).join('')}</tbody></table>` : ''}`;
+};
 CORPUS_RENDER.overlap = r => {
   const pct = v => Math.round(v * 100) + '%';
   return `<table><thead><tr><th>Business id</th><th>Tasks</th><th>Evidence tokens</th><th>Distinct tokens</th><th>Shareable</th><th>Pairs sharing</th><th>…≥ 80% inside</th><th>…≥ 50% inside</th></tr></thead><tbody>${r.rows.map(x => `<tr>
@@ -964,6 +1033,15 @@ $('#corpusAccept').onclick = e => {
   }
   const tags = $('#corpusSplit') && $('#corpusSplit').value ? [$('#corpusSplit').value] : [];
   runCorpusMeasure(e, 'acceptance', 'Measuring (extraction + validation on every value task)…', {kinds, tags, cases});
+};
+$('#corpusRecover').onclick = e => {
+  const kinds = [...document.querySelectorAll('#corpusFilters input[name=kind]:checked')].map(x => x.value);
+  const cases = [...document.querySelectorAll('#corpusCases input[name=case]:checked')].map(x => x.value);
+  if (document.querySelector('#corpusCases input[name=case]') && !cases.length) {
+    $('#corpusResult').innerHTML = '<div class="msg bad">select at least one extraction project to test</div>'; return;
+  }
+  const tags = $('#corpusSplit') && $('#corpusSplit').value ? [$('#corpusSplit').value] : [];
+  runCorpusMeasure(e, 'recovery', 'Measuring (the whole engine with recovery on every selected task: slow)…', {kinds, tags, cases});
 };
 $('#corpusRecords').onclick = e => {
   const cases = [...document.querySelectorAll('#corpusCases input[name=case]:checked')].map(x => x.value);
@@ -1217,7 +1295,7 @@ function showProposal(r) {
 }
 
 /* ---------- logs (engine events, polled) ---------- */
-const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S05: 'plan', S06: 'retrieve', S07: 'extract', S08: 'interpret', S09: 'records', S10: 'validate', S11: 'accept', S13: 'result', eval: 'evaluate', ui: 'queue'};
+const STAGES = {S01: 'scope', S02: 'compile', S03: 'parse', S04: 'index', S05: 'plan', S06: 'retrieve', S07: 'extract', S08: 'interpret', S09: 'records', S10: 'validate', S11: 'accept', S12: 'recover', S13: 'result', eval: 'evaluate', ui: 'queue'};
 const RUNS = new Map();   // run id -> {id,title,start,end,failed,events:[],progress:{},open:{},stages:{}}
 let logSeq = 0, lastRunId = null;
 const openRuns = new Set();

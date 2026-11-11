@@ -38,7 +38,9 @@ def audit(
     for why in discovery.failed_windows:
         out.append(finding(L, Category.DISCOVERY_FAILED, why, task_id, RecoveryHint(action="retry_call", reason=why)))
     if discovery.truncated:
-        out.append(finding(L, Category.OUTPUT_TRUNCATED, "a discovery answer reached its limit: there may be more records than were listed", task_id))
+        after = f"B{max(s.start for s in spans)}-B{scope.last}" if spans else f"B{scope.first}-B{scope.last}"
+        out.append(finding(L, Category.OUTPUT_TRUNCATED, "a discovery answer reached its limit: there may be more records than were listed", task_id,
+                           RecoveryHint(action="inspect_passages", reason=after)))
     for key in duplicates:
         out.append(finding(L, Category.DUPLICATE_KEY, f"the identity '{key}' was found in two different places", task_id))
     for s in spans:
@@ -55,11 +57,11 @@ def audit(
 
 
 def numbering_gaps(task_id: str, spans: list[Span]) -> list[ValidationFinding]:
-    groups: dict[str, list[tuple[str, int | None, str]]] = {}
+    groups: dict[str, list[tuple[str, int | None, Span]]] = {}
     for s in spans:
         part = sequence_part(s.key)
         if part:
-            groups.setdefault(part[0], []).append((part[1], part[2], s.key))
+            groups.setdefault(part[0], []).append((part[1], part[2], s))
     out = []
     for prefix, members in groups.items():
         if len(members) < 3:
@@ -77,11 +79,22 @@ def numbering_gaps(task_id: str, spans: list[Span]) -> list[ValidationFinding]:
         missing = sorted(wanted - set(values))
         name = lambda v: str(v) if kind == "number" else chr(v + 96) if kind == "letter" else _to_roman(v)  # noqa: E731
         where = f" under '{prefix}'" if prefix else ""
+        at = dict(zip(values, (m[2] for m in members)))  # sequence value -> the record that has it
         if missing:
-            out.append(finding(L, Category.NUMBERING_GAP, f"the {kind} sequence{where} skips {', '.join(name(v) for v in missing)}: a record may be missing", task_id))
+            region = _between(at[max(v for v in values if v < missing[0])], at[min(v for v in values if v > missing[-1])])
+            out.append(finding(L, Category.NUMBERING_GAP, f"the {kind} sequence{where} skips {', '.join(name(v) for v in missing)}: a record may be missing", task_id,
+                               RecoveryHint(action="inspect_passages", reason=region) if region else None))
         if min(values) > 1:
-            out.append(finding(L, Category.NUMBERING_GAP, f"the {kind} sequence{where} starts at {name(min(values))}, not at the beginning", task_id))
+            first = getattr(at[min(values)], "start", None)
+            out.append(finding(L, Category.NUMBERING_GAP, f"the {kind} sequence{where} starts at {name(min(values))}, not at the beginning", task_id,
+                               RecoveryHint(action="inspect_passages", reason=f"B{max(0, first - 12)}-B{first}") if first is not None else None))
     return out
+
+
+def _between(before, after) -> str:
+    """The block region between two records ("B14-B19"): where a member missing from their sequence must be."""
+    a, b = getattr(before, "start", None), getattr(after, "start", None)
+    return "" if a is None or b is None else f"B{min(a, b)}-B{max(a, b)}"
 
 
 # --- scope accounting -------------------------------------------------------------------------------------------------------

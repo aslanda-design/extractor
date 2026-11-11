@@ -22,3 +22,5 @@ class ModelReply(StrictModel):
     seconds: float = 0.0
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    failure: str | None = None  # kind of failure, set by the adapter: transport | truncated | invalid_json | context_full | no_model
+    cached: bool = False  # the reply was read from the model-call cache (no model ran; `seconds` is what the original call took)

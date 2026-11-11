@@ -47,10 +47,13 @@ tasks:
         - id: title
           kind: value
           description: The clause title, copied from the document.
-        - id: instruction
+        - id: creates_obligation
           kind: interpretation
-          description: A short summary of the obligations the clause creates.
-          output: {type: text}
+          description: Whether the clause creates an obligation for a party.
+          output:
+            labels:
+              - {name: "yes", meaning: "The clause says a party shall, must or agrees to do something."}
+              - {name: "no", meaning: "The clause only defines, describes or permits."}
           rules:
             decision_criteria:
-              - Summarize only what the clause itself states.
+              - Decide only from what the clause itself states.

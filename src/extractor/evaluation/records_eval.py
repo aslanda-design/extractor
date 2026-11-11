@@ -29,6 +29,7 @@ from ..scope import DocumentRequest, build_manifest, resolve_task_documents
 from ..spec import compile_specification_file
 from ..validation.records import decide_records
 from .corpus import Corpus
+from .scoped import measured, split_of
 
 THRESHOLD = 0.5
 
@@ -75,6 +76,7 @@ class TaskRecordsScore(StrictModel):
     case_id: str
     task_id: str
     profile: str
+    split: str = "no split"  # the case's `split:` tag
     gold: int
     found: int
     matched: int
@@ -101,17 +103,23 @@ class TaskRecordsScore(StrictModel):
 class RecordsReport(StrictModel):
     scores: list[TaskRecordsScore]
 
-    def totals(self) -> dict:
-        t = lambda f: sum(f(s) for s in self.scores)  # noqa: E731
+    def totals(self, split: str | None = None) -> dict:
+        scores = [s for s in self.scores if split is None or s.split == split]
+        t = lambda f: sum(f(s) for s in scores)  # noqa: E731
         gold, found, matched = t(lambda s: s.gold), t(lambda s: s.found), t(lambda s: s.matched)
         fields = t(lambda s: s.fields_total)
-        return {"tasks": len(self.scores), "gold": gold, "found": found, "matched": matched,
+        return {"tasks": len(scores), "gold": gold, "found": found, "matched": matched,
                 "recall": matched / gold if gold else None, "precision": matched / found if found else None,
                 "field_exact": t(lambda s: s.fields_exact) / fields if fields else None,
                 "field_near": t(lambda s: s.fields_near) / fields if fields else None,
-                "supported": sum(s.status == "supported" for s in self.scores),
-                "complete_checked": sum(s.completeness == "checked" for s in self.scores),
-                "seconds": sum(s.seconds for s in self.scores)}
+                "supported": sum(s.status == "supported" for s in scores),
+                "complete_checked": sum(s.completeness == "checked" for s in scores),
+                "seconds": sum(s.seconds for s in scores)}
+
+    def headline(self) -> dict[str, float | None]:
+        """The numbers compared between repeated runs (`eval --repeat`)."""
+        t = self.totals()
+        return {"record recall": t["recall"], "record precision": t["precision"], "field exact": t["field_exact"], "tasks supported": float(t["supported"])}
 
     def format(self) -> str:
         head = f"{'case/task':<34}{'gold':>5}{'found':>6}{'recall':>8}{'prec.':>7}{'exact':>7}{'near':>6}  {'status':<10}{'complete':<9}{'sec':>6}"
@@ -126,6 +134,12 @@ class RecordsReport(StrictModel):
         lines += ["", f"TOTAL {t['tasks']} task(s): recall {pct(t['recall'])} ({t['matched']}/{t['gold']}), precision {pct(t['precision'])} "
                       f"({t['matched']}/{t['found']}), field exact {pct(t['field_exact'])}, near {pct(t['field_near'])}, "
                       f"supported {t['supported']}, completeness checked {t['complete_checked']}"]
+        splits = sorted({s.split for s in self.scores})
+        if splits not in ([], ["no split"]):  # design fixes on train / validation; the test split is the number to report
+            for split in splits:
+                t = self.totals(split)
+                lines.append(f"  split {split:<11}{t['tasks']} task(s): recall {pct(t['recall'])} ({t['matched']}/{t['gold']}), precision {pct(t['precision'])}, "
+                             f"field exact {pct(t['field_exact'])}, supported {t['supported']}")
         for s in self.scores:
             lines += [f"  MISS   {s.case_id}/{s.task_id}: {m}" for m in s.misses]
             lines += [f"  FALSE  {s.case_id}/{s.task_id}: {m}" for m in s.false_records]
@@ -133,6 +147,7 @@ class RecordsReport(StrictModel):
         return "\n".join(lines)
 
 
+@measured
 def evaluate_records(
     corpus: Corpus, config: RuntimeConfig, adapters: AdapterSet, store: ArtifactStore, profiles: list[str],
     tags: list[str] | None = None, case_ids: list[str] | None = None, tasks: list[str] | None = None, save_dir: Path | None = None,
@@ -174,7 +189,7 @@ def evaluate_records(
                         if overlap(value, got) < 0.9:
                             wrong.append(f"{_short(next(iter(gold[gi].values())))}.{key}: expected {_short(value)!r} got {_short(got)!r}")
                 scores.append(TaskRecordsScore(
-                    case_id=case.case_id, task_id=task.id, profile=profile, gold=len(gold), found=len(found), matched=len(pairs),
+                    case_id=case.case_id, task_id=task.id, profile=profile, split=split_of(case), gold=len(gold), found=len(found), matched=len(pairs),
                     fields_total=total, fields_exact=exact_n, fields_near=near_n, status=decision.status.value, completeness=completeness.value,
                     expected_completeness=(expected.completeness or Completeness.CHECKED).value, seconds=time.time() - started,
                     misses=[_short(" | ".join(str(v) for v in g.values())) for i, g in enumerate(gold) if i not in pairs],

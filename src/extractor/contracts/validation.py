@@ -72,12 +72,15 @@ class Category(StrEnum):
     # semantic
     SEMANTIC_UNSUPPORTED = "semantic_unsupported"
     SEMANTIC_CHECK_FAILED = "semantic_check_failed"
+    # recovery (S12)
+    RECOVERY_BUDGET_EXHAUSTED = "recovery_budget_exhausted"  # recovery stopped because attempts, calls or seconds ran out (info)
+    RECOVERY_DISAGREEMENT = "recovery_disagreement"  # a recovery attempt found a different value than an earlier attempt (info)
     # qualification
     MODEL_NOT_QUALIFIED = "model_not_qualified"
 
 
 class RecoveryHint(StrictModel):
-    """What a later recovery step (S12) could do about a finding. Phase 6 only records it."""
+    """What recovery (S12, `recovery/`) could do about a finding."""
 
     action: str  # reparse_region | inspect_passages | retry_call | resolve_reference
     document_id: str | None = None

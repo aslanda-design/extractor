@@ -26,12 +26,38 @@ class ModelsConfig(StrictModel):
     extraction: AdapterSelection = AdapterSelection()
     interpretation: AdapterSelection = AdapterSelection()
     verification: AdapterSelection = AdapterSelection()
+    escalation: AdapterSelection = AdapterSelection()  # a stronger chat model that ONLY recovery (S12) may ask; `fake` = no escalation
 
 
 class ExecutionConfig(StrictModel):
-    max_concurrency: int = Field(default=1, ge=1)
-    max_recovery_attempts: int = Field(default=2, ge=0)
-    max_seconds_per_task: float | None = None
+    """How a run is carried out (never what it decides)."""
+
+    max_concurrency: int = Field(default=1, ge=1)  # tasks of one dependency layer run side by side, capped by the model's own `max_parallel`
+    max_recovery_attempts: int = Field(default=2, ge=0)  # S12: recovery tries per task (0 = no recovery)
+    max_seconds_per_task: float | None = None  # S12: no new recovery attempt starts once a task has used this much model time (None = only `recovery.max_seconds`)
+    cache_model_calls: bool = True  # a call that already gave a usable answer is read from the artifact store, not made again (resume, cheap re-measurement)
+    retry_pause_seconds: float = Field(default=2.0, ge=0)  # pause before re-sending a call that failed in transport (times the attempt number)
+    skip_blocked_dependents: bool = True  # a task whose `depends_on` was not accepted is not sent to the model (it could not be accepted anyway)
+
+
+RECOVERY_ACTIONS = ("retry_call", "widen_evidence", "rediscover", "refield", "deepen", "escalate_model")
+
+
+class RecoverySettings(StrictModel):
+    """S12: what the engine may try when a task was not accepted. Every attempt re-runs extraction AND validation.
+
+    `actions` lists the actions that are allowed. The default has only the ones that COMPLETE an inspection the engine knows
+    is incomplete (a failed call, evidence that did not fit, numbered text no record covers). `refield`, `deepen` and
+    `escalate_model` change how the answer is produced, so they stay off until `eval --recovery` shows on your corpus that
+    they rescue answers without creating a false accept."""
+
+    enabled: bool = True
+    actions: list[Literal["retry_call", "widen_evidence", "rediscover", "refield", "deepen", "escalate_model"]] = ["retry_call", "widen_evidence", "rediscover"]
+    max_calls: int = Field(default=6, ge=0)  # extra model calls recovery may spend on one task (a records task: per round)
+    max_seconds: float = Field(default=180.0, ge=0)  # extra model seconds recovery may spend on one task
+    evidence_budget_factor: float = Field(default=2.0, gt=1)  # widen_evidence: the task's evidence budget is multiplied by this
+    deeper_profile: dict[str, str] = {"light": "standard", "standard": "deep"}  # deepen: the next depth after each profile
+    rediscover_margin_blocks: int = Field(default=2, ge=0)  # rediscover: blocks read on each side of an uncovered region
 
 
 class StorageConfig(StrictModel):
@@ -287,6 +313,7 @@ class RuntimeConfig(StrictModel):
     extraction_profiles: dict[str, dict] = {}  # profile name -> ExtractionSettings fields to change at that depth
     interpretation: InterpretationSettings = InterpretationSettings()
     records: RecordSettings = RecordSettings()
+    recovery: RecoverySettings = RecoverySettings()
     interpretation_profiles: dict[str, dict] = {}  # profile name -> InterpretationSettings fields to change at that depth
     storage: StorageConfig = StorageConfig()
 
@@ -294,7 +321,7 @@ class RuntimeConfig(StrictModel):
         """Identity of the settings that can change results (storage path excluded)."""
         return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking,
                            self.retrieval.resolve(), self.extraction, self.planning, self.extraction_profiles, self.acceptance,
-                           self.interpretation, self.interpretation_profiles, self.records)
+                           self.interpretation, self.interpretation_profiles, self.records, self.recovery)
 
     def extraction_for(self, profile: str | None = None) -> ExtractionSettings:
         """S07 settings at the given depth: the base `extraction:` block, the built-in profile of that name, then yours."""
