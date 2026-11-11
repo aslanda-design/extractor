@@ -122,11 +122,11 @@ export function HistoryPanel({ open, onClose, refreshKey, activeRunId, activeDoc
                       <li key={r.run_id} className={cn("group/row flex items-stretch border-b", active && "bg-evidence-soft")}>
                         <button type="button" onClick={() => onOpenRun(r.run_id)} className="hover:bg-secondary min-w-0 flex-1 px-3 py-2.5 text-left transition-colors">
                           <span className="flex items-center gap-2">
-                            <span className="size-2 shrink-0 rounded-full" style={{ background: r.status === "ok" ? "var(--ok)" : "var(--bad)" }} aria-hidden />
+                            <span className={cn("size-2 shrink-0 rounded-full", (r.status === "running" || r.status === "queued") && "animate-pulse")} style={{ background: r.status === "ok" ? "var(--ok)" : r.status === "error" ? "var(--bad)" : "var(--warn)" }} aria-hidden />
                             <span className="min-w-0 flex-1 truncate text-sm font-medium">{doc}</span>
                             <span className="tabular text-muted-foreground shrink-0 text-xs">{time(r.started_at)}</span>
                           </span>
-                          <span className="text-muted-foreground mt-0.5 block truncate text-xs">{r.headline || r.error || "No summary"}</span>
+                          <span className="text-muted-foreground mt-0.5 block truncate text-xs">{r.status === "running" ? "Running now" : r.status === "queued" ? "Waiting for the GPU" : r.headline || r.error || "No summary"}</span>
                           <span className="text-muted-foreground tabular block truncate text-[11px]">
                             {r.params.spec_name} · {r.seconds !== null ? `${r.seconds}s` : "time unknown"}
                           </span>

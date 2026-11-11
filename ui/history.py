@@ -6,6 +6,7 @@ this module only stores what the engine already returned.
 """
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -134,21 +135,70 @@ class RunHistory:
         self.folder = Path(folder)
         self.folder.mkdir(parents=True, exist_ok=True)
 
-    def record(self, kind: str, params: dict, settings: dict, started: datetime, status: str,
-               result: dict | None = None, error: str | None = None) -> str:
-        """Write one run; returns its id. `status` is `ok` or `error` (the job started but raised)."""
-        finished = datetime.now()
-        run_id = f"{started:%Y%m%d-%H%M%S}-{started.microsecond // 1000:03d}-{kind.replace('.', '-')}"
+    # A run is written when it STARTS (status `queued` while it waits for the shared GPU, then `running`) and completed when it ends
+    # (`ok` or `error`). So the history, a page refresh and a second browser tab all see a run in progress, and a run that was
+    # interrupted (the server stopped) is still on record instead of silently missing.
+    ACTIVE = ("queued", "running")
+
+    def start(self, kind: str, params: dict, settings: dict, started: datetime, status: str = "running",
+              events_run: str = "", engine_run_id: str = "") -> str:
+        """Register a run that has just started; returns its id (the same id until it finishes)."""
+        base = f"{started:%Y%m%d-%H%M%S}-{started.microsecond // 1000:03d}-{kind.replace('.', '-')}"
+        run_id, n = base, 1
+        while (self.folder / f"{run_id}.json").exists():  # two runs of one kind in the same millisecond
+            n += 1
+            run_id = f"{base}-{n}"
         record = {
             "run_id": run_id, "kind": kind, "label": KINDS.get(kind, kind), "status": status,
-            "started_at": started.isoformat(timespec="seconds"), "finished_at": finished.isoformat(timespec="seconds"),
-            "seconds": round((finished - started).total_seconds(), 1),
-            "params": params, "settings": settings, "subject": subject(kind, params),
-            "headline": headline(kind, result) if status == "ok" else _short(error, 120),
-            "error": error, "result": result,
+            "started_at": started.isoformat(timespec="seconds"), "finished_at": None, "seconds": None,
+            "params": params, "settings": settings, "subject": subject(kind, params), "headline": "",
+            "error": None, "result": None, "events_run": events_run, "engine_run_id": engine_run_id,
         }
-        (self.folder / f"{run_id}.json").write_text(json.dumps(record, ensure_ascii=False, default=str), encoding="utf-8")
+        self._write(run_id, record)
         return run_id
+
+    def update(self, run_id: str, **fields) -> None:
+        record = self.get(run_id)
+        if record is not None:
+            self._write(run_id, {**record, **fields})
+
+    def finish(self, run_id: str, status: str, result: dict | None = None, error: str | None = None) -> None:
+        """Complete a registered run: `ok` with its result, or `error` with what went wrong."""
+        record = self.get(run_id)
+        if record is None:  # deleted while it ran: there is nothing to complete
+            return
+        finished = datetime.now()
+        started = datetime.fromisoformat(record["started_at"])
+        self._write(run_id, {
+            **record, "status": status, "finished_at": finished.isoformat(timespec="seconds"),
+            "seconds": round((finished - started).total_seconds(), 1),
+            "headline": headline(record["kind"], result) if status == "ok" else _short(error, 120),
+            "error": error, "result": result,
+            "engine_run_id": (result or {}).get("engine_run_id") or record.get("engine_run_id", ""),
+        })
+
+    def record(self, kind: str, params: dict, settings: dict, started: datetime, status: str,
+               result: dict | None = None, error: str | None = None) -> str:
+        """Write a run that is already over (start + finish in one step); returns its id."""
+        run_id = self.start(kind, params, settings, started)
+        self.finish(run_id, status, result, error)
+        return run_id
+
+    def mark_interrupted(self) -> int:
+        """Runs still `queued` / `running` when the server starts were cut off by a stop: say so. Finished model calls are
+        cached, so running the same thing again resumes instead of starting over."""
+        n = 0
+        for r in self.list():
+            if r["status"] in self.ACTIVE:
+                self.finish(r["run_id"], "error", error="the server stopped before this run finished (run it again: finished model calls are reused)")
+                n += 1
+        return n
+
+    def _write(self, run_id: str, record: dict) -> None:
+        path = self.folder / f"{run_id}.json"
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=False, default=str), encoding="utf-8")
+        os.replace(tmp, path)  # atomic: a reader polling a running run never sees half a file
 
     def list(self, kind: str | None = None, group: str | None = None) -> list[dict]:
         """Summaries (no result), newest first. `group` is a kind prefix such as `corpus.`."""

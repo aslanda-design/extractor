@@ -57,9 +57,9 @@ def call_model(
     """The last reply after at most `retries` extra attempts (a reply without data counts as failed)."""
     if think is not None:
         prompt = prompt.model_copy(update={"think": think})
-    if DOCUMENT_IS_DATA not in prompt.system:  # 0. the guard against instructions planted in a document
-        prompt = prompt.model_copy(update={"system": prompt.system + DOCUMENT_IS_DATA})
     exe = current()
+    if (exe is None or exe.guard) and DOCUMENT_IS_DATA not in prompt.system:  # 0. the guard against instructions planted in a document
+        prompt = prompt.model_copy(update={"system": prompt.system + DOCUMENT_IS_DATA})
 
     # 1. Already answered? (same model, same limits, same prompt)
     key = exe.cache.key(extractor, prompt) if exe and exe.cache else None

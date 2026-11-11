@@ -94,8 +94,13 @@ export interface HistoryRow {
   run_id: string
   kind: string
   label: string
-  status: "ok" | "error"
+  /** a run is on record from its start: queued (waiting for the shared GPU), running, then ok or error */
+  status: "queued" | "running" | "ok" | "error"
   started_at: string
+  finished_at?: string | null
+  /** the id of the job's engine events (follow a run in progress by them) and the id the engine gives the run (reviews attach to it) */
+  events_run?: string
+  engine_run_id?: string
   seconds: number | null
   subject: string
   headline: string

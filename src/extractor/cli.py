@@ -537,6 +537,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):  # document text can hold any character; a Windows console code page cannot print them all
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     try:
         return args.func(args)
     except (SpecificationError, ManifestError, CorpusError) as exc:

@@ -16,9 +16,10 @@ import { ThemeToggle } from "@/lib/theme"
 import { ViewToggle, type RightView } from "@/components/view-toggle"
 import { FieldList, PipelineStage } from "@/pipeline/panels"
 import { usePipelineFeed } from "@/pipeline/use-feed"
-import type { BlocksData, EngineEvent, Highlight, ReviewedItem, RunOutput, Source } from "@/lib/types"
+import type { BlocksData, EngineEvent, Highlight, HistoryRow, ReviewedItem, RunOutput, Source } from "@/lib/types"
 
 const SAMPLE_NAME = "Service agreement (fictional sample)"
+const LAST_RUN = "extractor.lastRun"
 
 export function App() {
   const [source, setSource] = useState<Source | null>(null)
@@ -52,6 +53,7 @@ export function App() {
   const [runOpen, setRunOpen] = useState(false)
   const [view, setView] = useState<"yaml" | "json" | null>(null)
   const token = useRef(0)
+  const followToken = useRef(0)
 
   const items = useMemo(() => (result ? toReviewItems(result.results, blocks) : []), [result, blocks])
 
@@ -85,7 +87,14 @@ export function App() {
   )
   const isSample = source?.kind === "sample"
 
+  /** Stops watching a run in progress (it keeps going in the engine; it is in the History and can be reopened). */
+  const stopFollowing = useCallback(() => {
+    followToken.current++
+    setRunning(false)
+  }, [])
+
   const openSample = useCallback(async () => {
+    stopFollowing()
     try {
       const s = await loadSample()
       setError(null)
@@ -108,17 +117,97 @@ export function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    // loads the saved sample once; all state is set after the fetch resolves
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void openSample()
-  }, [openSample])
-
   const focus = useCallback((page: number | null, hs: Highlight[], reveal?: boolean) => {
     setHighlights(hs)
     if (page !== null) setJump({ page, token: ++token.current })
     if (reveal && page !== null) setTab("document")
   }, [])
+
+  /** Follows a run that is on record: shows its events live and, when it ends, its result. Safe to call again after a refresh or from
+   * another page of the app: the run lives in the engine, this only watches it. Following stops when something else is opened. */
+  const follow = async (id: string) => {
+    const mine = ++followToken.current
+    const current = () => followToken.current === mine
+    let stop = () => {}
+    let subscribedTo = ""
+    try {
+      for (;;) {
+        const row = await api.runDetail(id)
+        if (!current()) return
+        if (row.events_run && subscribedTo !== row.events_run) {
+          subscribedTo = row.events_run
+          stop()
+          stop = streamLogs(
+            0,
+            (e) => {
+              if (e.run !== row.events_run || !current()) return
+              setEvents((prev) => [...prev, e])
+              feed.push(e)
+            },
+            () => setStreamError(true)
+          )
+        }
+        if (row.status === "running" || row.status === "queued") {
+          await new Promise((r) => setTimeout(r, 1200))
+          continue
+        }
+        if (row.status === "error") throw new Error(row.error ?? "The run failed.")
+        const out = row.result
+        const documentName = row.params.documents?.[0]
+        if (!out || !documentName) throw new Error("The run finished without a result.")
+        setResult({ ...out, run_id: id })
+        setBlocks(await api.blocks(documentName))
+        setActiveRunId(id)
+        setTab("results")
+        setRightView("results")
+        return
+      }
+    } catch (e) {
+      if (current()) setError((e as Error).message)
+    } finally {
+      if (current()) {
+        setRunning(false)
+        setRefreshKey((k) => k + 1)
+      }
+      setTimeout(stop, 1200) // let the last events arrive
+    }
+  }
+
+  /** Shows a run that is still in progress (a refresh, the History panel, another tab) and keeps following it. */
+  const resumeRun = async (row: HistoryRow) => {
+    const documentName = row.params.documents?.[0]
+    if (!documentName) return
+    setError(null)
+    feed.reset()
+    setPipeSel(null)
+    setEvents([])
+    setLogMode("live")
+    setStreamError(false)
+    setLogsOpen(true)
+    setResult(null)
+    setSelectedId(null)
+    setHighlights([])
+    setJump(null)
+    setActiveRunId(row.run_id)
+    setDocName(documentName)
+    setRunning(true)
+    setRightView("pipeline")
+    setTab("results")
+    setHistoryOpen(false)
+    let yaml = ""
+    try {
+      yaml = (await api.spec(row.params.spec_name ?? "")).text
+    } catch {
+      /* the spec may have been renamed: the run is still followed */
+    }
+    setSource({ kind: "upload", name: documentName, pdfUrl: api.fileUrl(documentName), yaml, meta: `Started ${new Date(row.started_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` })
+    try {
+      setBlocks(await api.blocks(documentName))
+    } catch {
+      /* the document is shown without highlights until the run ends */
+    }
+    void follow(row.run_id)
+  }
 
   const startRun = async (a: { documentName: string; specName: string; specText: string; fileName: string }) => {
     setError(null)
@@ -139,34 +228,16 @@ export function App() {
     setStreamError(false)
     setLogsOpen(true)
     setSource({ kind: "upload", name: a.fileName, pdfUrl: api.fileUrl(a.documentName), yaml: a.specText })
-    // only events of this action: those that arrive after the click and belong to a job it started
-    const runs = new Set<string>()
-    let stop = () => {}
+    // The run is registered by the engine the moment it starts and keeps going without this page: we only follow it.
     try {
-      const since = await api.lastLogSeq()
-      stop = streamLogs(
-        since,
-        (e) => {
-          if (e.kind === "run_start") runs.add(e.run)
-          if (runs.has(e.run)) {
-            setEvents((prev) => [...prev, e])
-            feed.push(e)
-          }
-        },
-        () => setStreamError(true)
-      )
-      const out = await api.run(a.specName, [a.documentName])
-      setResult(out)
-      setActiveRunId(out.run_id ?? null)
-      setBlocks(await api.blocks(a.documentName))
-      setTab("results")
-      setRightView("results")
+      const started = await api.startRun(a.specName, [a.documentName])
+      setActiveRunId(started.run_id)
+      setRefreshKey((k) => k + 1) // it is in the History already
+      setBlocks(await api.blocks(a.documentName)) // the document is visible while the run works
+      await follow(started.run_id)
     } catch (e) {
       setError((e as Error).message)
-    } finally {
       setRunning(false)
-      setRefreshKey((k) => k + 1)
-      setTimeout(stop, 1200) // let the last events arrive
     }
   }
 
@@ -174,6 +245,8 @@ export function App() {
   const openRun = async (id: string) => {
     try {
       const row = await api.runDetail(id)
+      if (row.status === "running" || row.status === "queued") return resumeRun(row) // still in progress: watch it
+      stopFollowing()
       const out = row.result
       const documentName = row.params.documents?.[0]
       if (!out || !documentName) throw new Error(row.error ? `That run failed: ${row.error}` : "That run has no saved result.")
@@ -204,8 +277,40 @@ export function App() {
     }
   }
 
+  // On load: the run that is in progress (or the one that was open before a refresh) comes back; otherwise the sample.
+  useEffect(() => {
+    void (async () => {
+      await openSample()
+      try {
+        const rows = await api.runs()
+        const active = rows.find((r) => r.status === "running" || r.status === "queued")
+        let remembered: string | null = null
+        try {
+          remembered = localStorage.getItem(LAST_RUN)
+        } catch {
+          /* storage can be unavailable (private window) */
+        }
+        const id = active?.run_id ?? (remembered && rows.some((r) => r.run_id === remembered) ? remembered : null)
+        if (id) await openRun(id)
+      } catch {
+        /* the engine is not reachable or has no runs: the sample stays */
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!activeRunId) return
+    try {
+      localStorage.setItem(LAST_RUN, activeRunId)
+    } catch {
+      /* not remembered: the History still has it */
+    }
+  }, [activeRunId])
+
   /** Opens an uploaded document with no answers yet, ready to run again. */
   const openDocument = (name: string) => {
+    stopFollowing()
     setError(null)
     setSource({ kind: "upload", name, pdfUrl: api.fileUrl(name), yaml: "" })
     setResult(null)

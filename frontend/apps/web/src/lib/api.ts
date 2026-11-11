@@ -54,6 +54,11 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => json<{ review_id: string }>(r)),
   reportUrl: (engineRunId: string) => `/api/engine-runs/${encodeURIComponent(engineRunId)}/report`,
+  /** Starts a run in the background and answers at once: it is on record (running) from this moment, poll `runDetail(run_id)`. */
+  startRun: (spec: string, documents: string[]) =>
+    fetch("/api/run/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spec, documents }) }).then((r) =>
+      json<{ run_id: string; status: string; engine_run_id: string }>(r)
+    ),
   fileUrl: (name: string) => `/api/documents/${encodeURIComponent(name)}/file`,
   lastLogSeq: () => fetch("/api/logs?since=2147483647").then((r) => json<{ last: number }>(r)).then((d) => d.last),
 }

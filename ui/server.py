@@ -230,6 +230,11 @@ def create_app(workspace_dir: Path) -> FastAPI:
     def run_labels(run_id: str):
         return ws.run_labels(run_id)
 
+    @app.post("/api/run/start")
+    def run_start(body: RunBody):
+        """Start a run in the background; answers at once with its history id (poll `/api/history/<id>` for its status and result)."""
+        return ws.start_run(body.spec, body.documents)
+
     @app.post("/api/plan")
     def plan(body: PlanBody):  # sync: retrieval only, no chat model
         return ws.plan(body.spec, body.documents, body.grouping)

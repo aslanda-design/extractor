@@ -73,7 +73,7 @@ export function HistoryView() {
                 className={cn("hover:bg-secondary w-full border-b px-3 py-2 text-left", openId === r.run_id && "bg-secondary")}
               >
                 <div className="flex items-center gap-2 text-xs">
-                  <span className={cn("size-2 rounded-full", r.status === "ok" ? "bg-ok" : "bg-bad")} aria-hidden />
+                  <span className={cn("size-2 rounded-full", r.status === "ok" ? "bg-ok" : r.status === "error" ? "bg-bad" : "bg-warn animate-pulse")} aria-hidden />
                   <span className="font-medium">{r.label}</span>
                   <span className="text-muted-foreground tabular ml-auto">{r.seconds}s</span>
                 </div>

@@ -25,6 +25,7 @@ class Execution:
     cache: CallCache | None = None
     meter: RunMeter = field(default_factory=RunMeter)
     retry_pause: float = 0.0  # seconds before re-sending a call that failed in transport (multiplied by the attempt number)
+    guard: bool = True  # append the document-is-data rule to every system prompt (`execution.document_guard`)
 
 
 _current: ContextVar[Execution | None] = ContextVar("execution", default=None)
@@ -48,7 +49,8 @@ def execution_scope(store: ArtifactStore | None, settings: ExecutionConfig | Non
         return
     settings = settings or ExecutionConfig()
     use_cache = settings.cache_model_calls if cache is None else cache
-    exe = Execution(cache=CallCache(store) if store is not None and use_cache else None, retry_pause=settings.retry_pause_seconds)
+    exe = Execution(cache=CallCache(store) if store is not None and use_cache else None, retry_pause=settings.retry_pause_seconds,
+                    guard=settings.document_guard)
     token = _current.set(exe)
     try:
         yield exe

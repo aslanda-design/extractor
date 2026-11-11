@@ -10,6 +10,8 @@ the engine knows nothing about this folder. The workspace is a plain folder:
 """
 
 import functools
+from dataclasses import dataclass
+from contextvars import ContextVar
 import inspect
 import json
 import re
@@ -50,7 +52,7 @@ from extractor.indexing.report import write_index_report
 from extractor.indexing.stores import registered_stores
 from extractor.parsing.backends.pdfium_renderer import PdfiumRenderer
 from extractor.parsing.report import write_report
-from extractor.pipeline import index_documents, plan_only, run_pipeline_report
+from extractor.pipeline import index_documents, plan_only, run_id_for, run_pipeline_report
 from extractor.evaluation.recovery_eval import evaluate_recovery
 from extractor.execution import execution_scope
 from extractor.api import Extractor, UnknownRun
@@ -98,11 +100,26 @@ def _safe_name(name: str) -> str:
     return base
 
 
-def recorded(kind: str):
-    """Store the run in the history (params, settings, timing, result or error) and add `run_id` to the result.
+@dataclass
+class Pending:
+    """A run that is about to start or in progress: its history entry is created when its job STARTS (not when it ends)."""
 
-    A run that fails before its job started (bad input such as "type a query") is not recorded; one that fails
-    inside the job is, with status `error`, so usage and failures can be tracked.
+    kind: str
+    params: dict
+    started: datetime
+    id: str | None = None  # the history id, once registered
+    engine_run_id: str = ""  # the id the engine will give the run (known up front for a `run`)
+
+
+_PENDING: ContextVar[Pending | None] = ContextVar("pending_run", default=None)
+
+
+def recorded(kind: str):
+    """Keep the run in the history FROM ITS START: the entry appears as soon as the job starts (status `running`), is completed with
+    its result or error when it ends, and `run_id` is added to the result.
+
+    A request that fails before its job started (bad input such as "type a query") is not recorded; one that fails inside
+    the job is, with status `error`, so usage and failures can be tracked.
     """
 
     def decorate(fn):
@@ -112,17 +129,20 @@ def recorded(kind: str):
         def wrapper(self, *args, **kwargs):
             bound = signature.bind(self, *args, **kwargs)
             bound.apply_defaults()
-            params = {k: v for k, v in bound.arguments.items() if k != "self"}
-            started = datetime.now()
-            self._job_started = False
+            pending = Pending(kind, {k: v for k, v in bound.arguments.items() if k != "self"}, datetime.now())
+            token = _PENDING.set(pending)
             try:
                 result = fn(self, *args, **kwargs)
             except Exception as exc:
-                if self._job_started:
-                    self.runs.record(kind, params, self._settings_summary(), started, "error", error=f"{type(exc).__name__}: {exc}")
+                if pending.id:  # the job had started (and is registered): complete its entry
+                    self.runs.finish(pending.id, "error", error=f"{type(exc).__name__}: {exc}")
                 raise
-            run_id = self.runs.record(kind, params, self._settings_summary(), started, "ok", result)
-            return {**result, "run_id": run_id}
+            finally:
+                _PENDING.reset(token)
+            if pending.id is None:  # a call that never opened a job: record it whole
+                pending.id = self.runs.start(kind, pending.params, self._settings_summary(), pending.started)
+            self.runs.finish(pending.id, "ok", result)
+            return {**result, "run_id": pending.id}
 
         return wrapper
 
@@ -139,7 +159,7 @@ class Workspace:
             d.mkdir(parents=True, exist_ok=True)
         self.runs = RunHistory(self.root / "history")  # every job the UI ran, kept across restarts
         self.runs.import_legacy(self.root / "corpus_history")
-        self._job_started = False
+        self.runs.mark_interrupted()  # a run that was in progress when the server last stopped is on record as interrupted
         self.config_path = self.root / "runtime.yaml"
         self.store = ArtifactStore(self.root.parent)  # shares models/caches with the CLI
         self._lock = threading.Lock()  # one parse at a time: the GPU is shared
@@ -151,10 +171,19 @@ class Workspace:
     def _job(self, title: str):
         """One logged job at a time (the GPU is shared): a run in the Logs tab, queued if another one is running."""
         with run_scope(title) as run_id:
-            if self._lock.locked():
+            queued = self._lock.locked()
+            pending = _PENDING.get()
+            if pending is not None:  # the run exists from here on: visible in the history, followable by its events
+                if pending.id is None:
+                    pending.id = self.runs.start(pending.kind, pending.params, self._settings_summary(), pending.started,
+                                                 "queued" if queued else "running", run_id, pending.engine_run_id)
+                else:
+                    self.runs.update(pending.id, events_run=run_id, status="queued" if queued else "running")
+            if queued:
                 emit("ui", "another job is running; waiting for it to finish", "warn")
             with self._lock:
-                self._job_started = True
+                if pending is not None and pending.id:
+                    self.runs.update(pending.id, status="running")
                 # one execution scope per job: finished model calls are read from the call cache, every call is metered
                 with execution_scope(self.store, self.get_config().execution):
                     yield run_id
@@ -625,8 +654,8 @@ class Workspace:
 
     # --- run --------------------------------------------------------------------
 
-    @recorded("run")
-    def run(self, spec_name: str, documents: list[str]) -> dict:
+    def _prepare_run(self, spec_name: str, documents: list[str]) -> tuple:
+        """What a run needs before its job starts: the checks that can reject the request (nothing is recorded if one does)."""
         if not documents:
             raise UiError("select at least one document")
         paths = [self.document_path(d) for d in documents]
@@ -639,6 +668,43 @@ class Workspace:
             manifest = build_manifest(DocumentRequest.from_paths(paths), self.store)
         except ManifestError as exc:
             raise UiError(str(exc)) from None
+        return spec, manifest, config
+
+    @recorded("run")
+    def run(self, spec_name: str, documents: list[str]) -> dict:
+        """The whole run, waiting for it to end (the History entry exists from its start all the same)."""
+        pending = _PENDING.get()
+        prepared = self._prepare_run(spec_name, documents)
+        if pending is not None:
+            pending.engine_run_id = run_id_for(prepared[0], prepared[1], prepared[2])
+        return self._execute_run(spec_name, documents, prepared)
+
+    def start_run(self, spec_name: str, documents: list[str]) -> dict:
+        """Start a run in the background and return AT ONCE with its id. The run is on record (queued / running) from this moment: it can be
+        followed by polling `/api/history/<id>` and its events, found again after a page refresh or from another tab, and its result appears in
+        the same entry when it ends. The shared GPU still runs one job at a time (a second run waits, `queued`)."""
+        prepared = self._prepare_run(spec_name, documents)  # raises UiError before anything is recorded
+        spec, manifest, config = prepared
+        pending = Pending("run", {"spec_name": spec_name, "documents": documents}, datetime.now(), engine_run_id=run_id_for(spec, manifest, config))
+        pending.id = self.runs.start(pending.kind, pending.params, self._settings_summary(), pending.started,
+                                     "queued" if self._lock.locked() else "running", "", pending.engine_run_id)
+
+        def work() -> None:
+            token = _PENDING.set(pending)
+            try:
+                result = self._execute_run(spec_name, documents, prepared)
+            except BaseException as exc:  # noqa: BLE001 - a background thread must record its failure, not die silently
+                self.runs.finish(pending.id, "error", error=f"{type(exc).__name__}: {exc}")
+            else:
+                self.runs.finish(pending.id, "ok", result)
+            finally:
+                _PENDING.reset(token)
+
+        threading.Thread(target=work, name=f"run-{pending.id}", daemon=True).start()
+        return {"run_id": pending.id, "status": "running", "engine_run_id": pending.engine_run_id}
+
+    def _execute_run(self, spec_name: str, documents: list[str], prepared: tuple) -> dict:
+        spec, manifest, config = prepared
         with self._job(f"Run {spec_name} on {len(documents)} document(s)") as run_id:
             adapters = build_adapters(config, self.store)
             indexed = index_documents(manifest, adapters, config, self.store)  # S03 + S04 (cached)
@@ -654,6 +720,7 @@ class Workspace:
             "spec_text": self.get_spec(spec_name),
             "trace": trace,
         }
+
 
     # --- saved runs, reviews and reports (S13) --------------------------------------------------------
     # (`self.runs` is the UI job history; these are the ENGINE's runs: results saved under their run id, with reviews kept apart)
@@ -821,7 +888,8 @@ class Workspace:
                 raise UiError(str(exc))
         rows = [{**r.model_dump(mode="json"), "automation_rate": r.automation_rate, "accepted_precision": r.accepted_precision,
                  "false_accept_rate": r.false_accept_rate, "false_absence_rate": r.false_absence_rate} for r in report.rows]
-        return {"rows": rows, "misses": [o.model_dump(mode="json") for o in report.outcomes if o.outcome not in ("accepted_correct", "correct_absence", "correct_uncertain")]}
+        return {"rows": rows, "by_split": _acceptance_by_split(report.outcomes),
+                "misses": [o.model_dump(mode="json") for o in report.outcomes if o.outcome not in ("accepted_correct", "correct_absence", "correct_uncertain")]}
 
     @recorded("corpus.records")
     def corpus_records(self, tags: list[str] | None = None, cases: list[str] | None = None, tasks: list[str] | None = None) -> dict:
@@ -840,6 +908,7 @@ class Workspace:
                 raise UiError(str(exc))
         return {"scores": [{**s.model_dump(mode="json"), "recall": s.recall, "precision": s.precision} for s in report.scores],
                 "totals": report.totals(), "saved_to": str(saved),
+                "by_split": {split: report.totals(split) for split in sorted({s.split for s in report.scores})},
                 "causes": [c.model_dump(mode="json") for c in attribute_records(saved)]}
 
     @recorded("corpus.recovery")
@@ -875,3 +944,16 @@ class Workspace:
             "page_accuracy": metrics.page_accuracy,
             "misses": [c.model_dump(mode="json") for c in checks if not c.found or c.on_expected_page is False],
         }
+
+
+def _acceptance_by_split(outcomes) -> list[dict]:
+    """The acceptance KPIs per `split:` tag of the cases (train / validation / test): the test row is the one to report."""
+    rows = []
+    for split in sorted({o.split for o in outcomes}):
+        mine = [o.outcome for o in outcomes if o.split == split]
+        accepted = mine.count("accepted_correct") + mine.count("false_accept")
+        rows.append({"split": split, "tasks": len(mine), "automation_rate": accepted / len(mine) if mine else None,
+                     "accepted_precision": mine.count("accepted_correct") / accepted if accepted else None,
+                     "false_accepts": mine.count("false_accept"), "false_absences": mine.count("false_absence"),
+                     "over_abstentions": mine.count("over_abstention")})
+    return rows

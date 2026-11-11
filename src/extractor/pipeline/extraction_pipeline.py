@@ -208,6 +208,7 @@ def run_pipeline_report(
         trace(t.id, "declared", "done", f"{t.id}: {t.kind.value} task declared", kind=t.kind.value, after=",".join(t.depends_on))
     ctx = _context(spec, manifest, adapters, config, indexed, store, profile)
     ctx.phase_seconds.update(phase_seconds or {})
+    emit("S13", f"run {run_id_of(ctx.execution, ctx.profile)} started: {len(spec.tasks)} task(s), {len(manifest.documents)} document(s)")
 
     # One execution scope for the whole run: the model-call cache (resume) and the meter (what the run cost).
     with execution_scope(store, config.execution) as exe:
@@ -268,6 +269,12 @@ def run_id_of(execution: ExecutionMetadata, profile: str) -> str:
     return fingerprint(sorted(execution.document_hashes.items()), execution.schema_hash, execution.runtime_fingerprint,
                        execution.stage_versions, profile)[:16]
 
+
+def run_id_for(spec: CompiledSpecification, manifest: DocumentManifest, config: RuntimeConfig, profile: str | None = None) -> str:
+    """The id a run WILL get, known before any work starts (everything that determines it exists once the specification is compiled
+    and the documents are hashed). The UI registers the run under it at the start, so a run in progress can be found and followed."""
+    return fingerprint(sorted({d.document_id: d.sha256 for d in manifest.documents}.items()), spec.schema_hash, config.fingerprint(),
+                       STAGE_VERSIONS, profile or config.retrieval.profile)[:16]
 
 
 def summarize(results: list[TaskResult], ctx: RunContext, seconds: float, limit: int) -> RunSummary:
