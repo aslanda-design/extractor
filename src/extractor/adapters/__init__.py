@@ -2,7 +2,7 @@
 
 from . import fakes
 from .base import Capability
-from .registry import AdapterSet, build_adapters, register_adapter, registered_adapters
+from .registry import AdapterSet, build_adapter, build_adapters, register_adapter, registered_adapters
 from ..parsing.layered_parser import LayeredParser  # noqa: E402  (after .base to avoid a cycle)
 from .chat_ollama import OllamaChat
 from .chat_openai import OpenAICompatibleChat
@@ -32,4 +32,4 @@ register_adapter(Capability.ESCALATION, "fake", fakes.FakeExtractor)
 register_adapter(Capability.ESCALATION, "ollama_chat", OllamaChat)
 register_adapter(Capability.ESCALATION, "openai_compatible_chat", OpenAICompatibleChat)
 
-__all__ = ["AdapterSet", "Capability", "build_adapters", "register_adapter", "registered_adapters"]
+__all__ = ["AdapterSet", "Capability", "build_adapter", "build_adapters", "register_adapter", "registered_adapters"]

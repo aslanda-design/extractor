@@ -1,12 +1,15 @@
 """Web server: thin HTTP layer over `service.Workspace`. Routes only, no logic."""
 
+import asyncio
+import json
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, File, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from service import UiError, Workspace
+from extractor.events import LOG
+from service import UiError, Workspace, public_event
 
 STATIC = Path(__file__).parent / "static"
 
@@ -14,6 +17,11 @@ STATIC = Path(__file__).parent / "static"
 class SpecBody(BaseModel):
     text: str
     name: str | None = None
+
+
+class DraftBody(BaseModel):
+    request: str  # what the user wants to extract, in their own words
+    current: str | None = None  # the YAML being edited: the request is then a change to it
 
 
 class SearchBody(BaseModel):
@@ -79,6 +87,27 @@ def create_app(workspace_dir: Path) -> FastAPI:
     def logs(since: int = 0, run: str | None = None):  # events newer than `since`; polled by the Logs tab
         return ws.logs(since, run)
 
+    @app.get("/api/logs/stream")
+    async def logs_stream(request: Request, since: int | None = None, run: str | None = None):
+        """Server-sent events: engine events as they happen (sanitized). `since` defaults to "from now"."""
+
+        async def gen():
+            seq = LOG.last_seq() if since is None else since
+            idle = 0
+            while not await request.is_disconnected():
+                events = LOG.since(seq)
+                for e in events:
+                    seq = e.seq
+                    if run is None or e.run == run:
+                        yield f"id: {e.seq}\ndata: {json.dumps(public_event(e))}\n\n"
+                idle = 0 if events else idle + 1
+                if idle and idle % 60 == 0:
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(0.25)
+
+        return StreamingResponse(gen(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
     @app.delete("/api/logs")
     def clear_logs():
         ws.clear_logs()
@@ -97,6 +126,15 @@ def create_app(workspace_dir: Path) -> FastAPI:
     def delete_document(name: str):
         ws.delete_document(name)
         return {"ok": True}
+
+    @app.get("/api/documents/{name}/file")
+    def document_file(name: str):  # the original file, for the PDF viewer
+        path = ws.document_path(name)
+        return FileResponse(path, media_type="application/pdf" if path.suffix.lower() == ".pdf" else None)
+
+    @app.get("/api/documents/{name}/blocks")
+    def document_blocks(name: str):  # located text blocks per page (parses first if needed)
+        return ws.blocks(name)
 
     @app.post("/api/documents/{name}/parse")
     def parse(name: str):  # sync endpoint: FastAPI runs it in a worker thread
@@ -134,6 +172,10 @@ def create_app(workspace_dir: Path) -> FastAPI:
     @app.post("/api/specs/validate")
     def validate(body: SpecBody):
         return ws.validate_spec(body.text)
+
+    @app.post("/api/specs/draft")
+    def draft_spec(body: DraftBody):  # sync: one chat-model call (plus a repair call at most)
+        return ws.draft_spec(body.request, body.current)
 
     @app.post("/api/specs")
     def save_spec(body: SpecBody):

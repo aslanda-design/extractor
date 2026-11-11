@@ -92,6 +92,8 @@ Or use the command line:
 # 1. Check an extraction spec: errors, review flags, execution order
 python -m extractor compile examples/spec.example.yaml
 
+# 1b. Draft a spec from plain language: web interface only (New extraction > "Describe it"; API POST /api/specs/draft).
+
 # 2. See how documents are scoped (hashes, ids, relationships, precedence flag)
 python -m extractor manifest --docs contract.pdf amendment.pdf
 

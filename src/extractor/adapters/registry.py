@@ -92,6 +92,11 @@ def _build(capability: Capability, config: RuntimeConfig, context: AdapterContex
     return factory(context, **selection.params)
 
 
+def build_adapter(capability: Capability, config: RuntimeConfig, store: ArtifactStore | None = None) -> Adapter:
+    """ONE adapter of the configured kind (e.g. only the chat model), without loading the parser, embedder and reranker."""
+    return _build(capability, config, AdapterContext(parsing=config.parsing, store=store))
+
+
 def build_adapters(config: RuntimeConfig, store: ArtifactStore | None = None) -> AdapterSet:
     context = AdapterContext(parsing=config.parsing, store=store)
     return AdapterSet(

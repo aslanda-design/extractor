@@ -82,6 +82,18 @@ def progress(stage: str, done: int, total: int, what: str = "") -> None:
     LOG.add("info", stage, f"{what} {done}/{total}".strip(), "progress", {"done": done, "total": total, "what": what})
 
 
+_TRACE_STAGE = {"declared": "S02", "retrieve": "S06", "read": "S07", "validate": "S10", "decide": "S11", "recover": "S12", "result": "S13"}
+
+
+def trace(task: str, phase: str, state: str, message: str = "", level: str = "info", stage: str | None = None, **data) -> None:
+    """Where ONE task is in the pipeline, as data the live graph can follow (the UI's Pipeline tab).
+
+    `phase` is declared | retrieve | read | validate | decide | recover | result; `state` is start | done | note.
+    Short identifiers only (task id, layer, action, outcome): never document text. Nothing reads these back."""
+    LOG.add(level, stage or _TRACE_STAGE.get(phase, "run"), message or f"{task}: {phase} {state}", "trace",
+            {"task": task, "phase": phase, "state": state, **data})
+
+
 @contextmanager
 def step(stage: str, message: str, **data) -> Iterator[dict]:
     """A timed step. Put results in the yielded dict and they appear on the closing line."""

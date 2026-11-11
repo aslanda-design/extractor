@@ -20,7 +20,7 @@ from ..config.runtime import ExecutionConfig, RecoverySettings
 from ..contracts.common import TaskStatus
 from ..contracts.result import RecoveryAttempt
 from ..contracts.task import TaskSpecification
-from ..events import emit, step
+from ..events import emit, step, trace
 from .actions import Planned, plan_actions, unrecoverable
 from .attempt import Attempt, RecordsAttempt, RecordsTools, RecoveryTools
 from .budget import Budget
@@ -124,6 +124,7 @@ def _run(task_id: str, plan: Planned, budget: Budget) -> tuple[object | None, in
     before = budget.used()
     new = None
     try:
+        trace(task_id, "recover", "start", f"{task_id}: recovery '{plan.action}' starts", action=plan.action)
         with step("S12", f"{task_id}: recovery '{plan.action}' ({plan.change})"):
             new = plan.run()
     except Exception as exc:  # noqa: BLE001 - a broken recovery action must not lose the result the task already has
@@ -133,6 +134,8 @@ def _run(task_id: str, plan: Planned, budget: Budget) -> tuple[object | None, in
 
 
 def _report(task_id: str, attempt: RecoveryAttempt) -> None:
+    trace(task_id, "recover", "done", f"{task_id}: recovery '{attempt.action}' ended", action=attempt.action,
+          outcome=attempt.status_after.value, kept=attempt.kept)
     emit("S12", f"{task_id}: '{attempt.action}' -> {attempt.status_after.value}; {'kept' if attempt.kept else 'not kept'} ({attempt.why}); "
                 f"{attempt.calls} call(s), {attempt.seconds:.1f}s", "ok" if attempt.kept else "warn")
 

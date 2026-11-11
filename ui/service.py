@@ -11,6 +11,7 @@ the engine knows nothing about this folder. The workspace is a plain folder:
 
 import functools
 import inspect
+import json
 import re
 import threading
 import time
@@ -22,7 +23,8 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from extractor.adapters import Capability, build_adapters, registered_adapters
+from extractor.adapters import Capability, build_adapter, build_adapters, registered_adapters
+from extractor.authoring import draft_specification
 from extractor.artifacts import ArtifactStore, fingerprint
 from extractor.config import RuntimeConfig
 from extractor.config.runtime import RetrievalSettings
@@ -66,6 +68,25 @@ CORPUS_DIR = Path(__file__).parent.parent / "evaluation" / "corpus"
 
 class UiError(ValueError):
     """A problem to show the user (bad name, missing file...)."""
+
+
+_SECRET = re.compile(r"(sk-[A-Za-z0-9_\-]{8,}|bearer\s+\S+|(?:api[_-]?key|token|secret|password)\s*[=:]\s*\S+)", re.I)
+
+
+_IDENT = re.compile(r"[\w .:+,/()-]*")
+
+
+def public_event(event) -> dict:
+    """An engine event safe to show or print: no secrets, no long text (which could be document content),
+    and only plain numbers/flags from its data. Used by the live stream and the terminal echo."""
+    message = _SECRET.sub("[hidden]", event.message)
+    if len(message) > 300:
+        message = message[:300] + "..."
+    data = {k: v for k, v in event.data.items() if isinstance(v, (int, float, bool))}
+    if event.kind == "trace":  # short identifiers that place a task in the pipeline (task id, phase, layer, action, outcome)
+        data.update({k: v for k, v in event.data.items() if isinstance(v, str) and len(v) <= 80 and _IDENT.fullmatch(v)})
+    return {"seq": event.seq, "time": event.time, "level": event.level, "stage": event.stage,
+            "message": message, "run": event.run, "kind": event.kind, "data": data}
 
 
 def _safe_name(name: str) -> str:
@@ -127,14 +148,14 @@ class Workspace:
     @contextmanager
     def _job(self, title: str):
         """One logged job at a time (the GPU is shared): a run in the Logs tab, queued if another one is running."""
-        with run_scope(title):
+        with run_scope(title) as run_id:
             if self._lock.locked():
                 emit("ui", "another job is running; waiting for it to finish", "warn")
             with self._lock:
                 self._job_started = True
                 # one execution scope per job: finished model calls are read from the call cache, every call is metered
                 with execution_scope(self.store, self.get_config().execution):
-                    yield
+                    yield run_id
 
     def logs(self, since: int = 0, run: str | None = None) -> dict:
         """Engine events newer than `since` (the Logs tab polls this)."""
@@ -278,6 +299,21 @@ class Workspace:
                  "attempts": i.attempts, "resolved": i.resolved}
                 for i in rep.issues
             ],
+        }
+
+    def blocks(self, name: str) -> dict:
+        """Page sizes and located text blocks of a document (PDF points), for drawing evidence on the page.
+
+        Parses the document first when it has not been parsed in this workspace."""
+        path = self.document_path(name)
+        parsed = self.reports / f"{path.stem}.parsed.json"
+        if not parsed.is_file():
+            self.parse(name)
+        data = json.loads(parsed.read_text(encoding="utf-8"))
+        return {
+            "pages": [{"page": p["page"], "width": p["width"], "height": p["height"]} for p in data["pages"]],
+            "blocks": [{"id": b["block_id"], "page": b["page"], "bbox": b["bbox"], "text": b["text"]}
+                       for b in data["blocks"] if b.get("bbox")],
         }
 
     def report_path(self, name: str, kind: str) -> Path:
@@ -568,6 +604,23 @@ class Workspace:
             "review": [i.model_dump(mode="json") for i in spec.review_issues],
         }
 
+    def draft_spec(self, request: str, current_yaml: str | None = None) -> dict:
+        """S02 authoring: a specification written from a plain-language request (one model call, compiled before it is returned).
+
+        Loads only the chat model (never the parser or embedder). `current_yaml` makes it an edit of that spec."""
+        config = self.get_config()
+        if config.models.extraction.name == "fake":
+            raise UiError("no chat model is configured: choose one for 'extraction' in Settings first")
+        try:
+            model = build_adapter(Capability.EXTRACTION, config, self.store)
+        except ValueError as exc:
+            raise UiError(str(exc)) from None
+        with self._job("Draft specification"):
+            try:
+                return draft_specification(request, model, current_yaml).as_dict()
+            except ValueError as exc:
+                raise UiError(str(exc)) from None
+
     # --- run --------------------------------------------------------------------
 
     @recorded("run")
@@ -584,14 +637,19 @@ class Workspace:
             manifest = build_manifest(DocumentRequest.from_paths(paths), self.store)
         except ManifestError as exc:
             raise UiError(str(exc)) from None
-        with self._job(f"Run {spec_name} on {len(documents)} document(s)"):
+        with self._job(f"Run {spec_name} on {len(documents)} document(s)") as run_id:
             adapters = build_adapters(config, self.store)
             indexed = index_documents(manifest, adapters, config, self.store)  # S03 + S04 (cached)
             report = run_pipeline_report(spec, manifest, adapters, config, indexed, store=self.store)  # S05-S13, recovery included
+        # What the history keeps next to the answer: the spec as it was (the name may be reused later) and where every field went
+        # (sanitized `trace` events), so a past run can be reopened and its pipeline replayed.
+        trace = [public_event(e) for e in LOG.since(0, run_id) if e.kind in ("trace", "run_start")]
         return {
             "manifest": manifest.model_dump(mode="json"),
             "results": [r.model_dump(mode="json") for r in report.results],
             "summary": report.summary.model_dump(mode="json"),  # calls, tokens, seconds, recovery: what the run cost
+            "spec_text": self.get_spec(spec_name),
+            "trace": trace,
         }
 
     @recorded("plan")

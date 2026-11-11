@@ -31,7 +31,7 @@ from ..contracts.evidence import EvidencePackage
 from ..contracts.passage import IndexedDocument
 from ..contracts.task import TaskSpecification
 from ..contracts.validation import AcceptanceDecision, Category, ValidationFinding, ValidationLayer, ValidationReport
-from ..events import emit
+from ..events import emit, trace
 from .consistency import check_consistency
 from .coverage_check import Scorer, check_coverage
 from .findings import finding
@@ -66,10 +66,12 @@ def validate_and_accept(
 ) -> Validated:
     settings = settings or AcceptanceSettings()
     findings: list[ValidationFinding] = []
+    trace(task.id, "validate", "start")
 
     def layer(name: str, found: list[ValidationFinding]) -> None:
         findings.extend(found)
         emit("S10", f"{task.id}: {name}: " + (f"{len(found)} finding(s)" if found else "ok"), "warn" if found else "info")
+        trace(task.id, "validate", "note", f"{task.id}: validation layer '{name}'", "warn" if found else "info", layer=name, findings=len(found))
 
     # 1. Structure: type, allowed label, cardinality.
     layer("structure", check_structure(task, proposal))
@@ -107,4 +109,5 @@ def validate_and_accept(
     decision = decide(task, proposal, report, settings)
     emit("S11", f"{task.id}: {decision.status.value} ({decision.policy} policy)" + (f" - {decision.reasons[0]}" if decision.reasons else ""),
          {"supported": "ok", "not_found": "ok"}.get(decision.status.value, "warn"))
+    trace(task.id, "decide", "done", outcome=decision.status.value, blocking=len(decision.blocking))
     return Validated(report=report, decision=decision, calls=calls)

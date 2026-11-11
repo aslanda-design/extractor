@@ -48,7 +48,7 @@ from ..contracts.passage import IndexedDocument
 from ..contracts.result import EvidenceLink, ExecutionMetadata, RecoveryAttempt, RunReport, RunSummary
 from ..contracts.validation import AcceptanceDecision, Category, ValidationLayer, ValidationReport
 from ..contracts.task import TaskSpecification
-from ..events import emit, progress
+from ..events import emit, progress, trace
 from ..execution import Execution, execution_scope, parallel_limit, run_parallel, task_scope
 from ..extraction import Asked, ask_batch, ask_task, conclude_task
 from ..interpretation.interpretation_pipeline import interpret_task
@@ -199,6 +199,8 @@ def run_pipeline_report(
 ) -> RunReport:
     """`run_pipeline`, returned as a RunReport (results + RunSummary: calls, tokens, seconds, recovery)."""
     started = started or time.time()
+    for t in spec.tasks:  # where the live graph starts: every task of the spec, before any stage touches it
+        trace(t.id, "declared", "done", f"{t.id}: {t.kind.value} task declared", kind=t.kind.value, after=",".join(t.depends_on))
     ctx = _context(spec, manifest, adapters, config, indexed, store, profile)
     ctx.phase_seconds.update(phase_seconds or {})
 
@@ -224,8 +226,9 @@ def run_pipeline_report(
             with lock:
                 done[0] += 1
                 progress("run", done[0], total, "tasks done")
-            emit("S13", f"{task_id}: {result.status.value}",
-                 {"supported": "ok", "not_found": "info", "uncertain": "warn", "failed": "error"}[result.status.value])
+            level = {"supported": "ok", "not_found": "info", "uncertain": "warn", "failed": "error"}[result.status.value]
+            emit("S13", f"{task_id}: {result.status.value}", level)
+            trace(task_id, "result", "done", outcome=result.status.value, level=level, attempts=sum(a.action != "none" for a in result.recovery))
             return result
 
         with _timed(ctx, "tasks"):
@@ -277,7 +280,9 @@ def retrieve_all(spec: CompiledSpecification, ctx: RunContext) -> None:
         return  # no index: the retrieval stage is skipped
     retrievable = [t for t in spec.graph.order if spec.task(t).kind != TaskKind.RECORDS]  # records: whole scope, S09
     for n, task_id in enumerate(retrievable, start=1):
+        trace(task_id, "retrieve", "start")
         ctx.evidence[task_id] = retrieve_task(spec.task(task_id), ctx, ctx.profile)
+        trace(task_id, "retrieve", "done", passages=len(ctx.evidence[task_id].passages))
         progress("S06", n, len(retrievable), "tasks have their evidence")
     values = {t: ctx.evidence[t] for t in retrievable if spec.task(t).kind == TaskKind.VALUE}
     if values:
@@ -309,9 +314,13 @@ def ask_all(spec: CompiledSpecification, ctx: RunContext, limit: int = 1) -> Non
     def ask(batch) -> dict[str, Asked]:
         tasks = [spec.task(t) for t in batch.task_ids]
         document_ids = list(dict.fromkeys(d for t in tasks for d in resolve_task_documents(t, ctx.manifest)))
+        for t in batch.task_ids:
+            trace(t, "read", "start", kind="value", batch=len(batch.task_ids))
         with task_scope("+".join(batch.task_ids)):
             asked = ask_batch(tasks, ctx.evidence, [ctx.indexed[d] for d in document_ids if d in ctx.indexed], ctx.adapters.extractor,
                               ctx.config.extraction_for(ctx.profile), ctx.config.planning, ledger=ctx.ledger)
+        for t in batch.task_ids:
+            trace(t, "read", "done", kind="value")
         with lock:
             done[0] += 1
             progress("S07", done[0], len(batches), "extraction calls done")
@@ -413,10 +422,14 @@ def attempt_task(
     # S07 / S08. Extract a value (value tasks) or decide a label under criteria (interpretation tasks).
     if task.kind == TaskKind.VALUE:
         model = stronger or ctx.adapters.extractor
+        if asked is None:  # a first try was asked in `ask_all`; a recovery try asks again
+            trace(task.id, "read", "start", kind="value")
         asked = asked or ask_task(task, package, scope_docs, model, extraction, ledger=ctx.ledger)
         proposal = conclude_task(asked, model, extraction)
     else:
+        trace(task.id, "read", "start", kind="interpretation")
         proposal = interpret_task(task, package, scope_docs, stronger or ctx.adapters.interpretation_model, interpretation, ledger=ctx.ledger)
+    trace(task.id, "read", "done", kind=task.kind.value, found=proposal.outcome.value)
 
     # S10 + S11. Validate the proposal and apply the engine's acceptance policy.
     retrieval = ctx.retrieval if profile == ctx.profile else ctx.config.retrieval.resolve(profile)
@@ -468,10 +481,16 @@ def _process_records(task: TaskSpecification, ctx: RunContext, document_ids: lis
     scorer = (lambda q, texts: ctx.tools.reranker.score(q, texts)) if ctx.tools else None
 
     def decide(outcome) -> RecordsAttempt:
-        return RecordsAttempt(outcome, *decide_records(task, outcome, ctx.config.acceptance))
+        trace(task.id, "validate", "start", kind="records")
+        attempt = RecordsAttempt(outcome, *decide_records(task, outcome, ctx.config.acceptance))
+        trace(task.id, "decide", "done", outcome=attempt.status.value, kind="records")
+        return attempt
 
     # S09, then S10 + S11 for the collection.
-    attempt = decide(extract_records(task, docs, ctx.adapters, ctx.config, ctx.profile, scorer=scorer, ledger=ctx.ledger))
+    trace(task.id, "read", "start", kind="records")
+    read = extract_records(task, docs, ctx.adapters, ctx.config, ctx.profile, scorer=scorer, ledger=ctx.ledger)
+    trace(task.id, "read", "done", kind="records")
+    attempt = decide(read)
 
     # S12. Recover: read again only what the audit says may be missing; the audit and the policy run again on the result.
     trail: list[RecoveryAttempt] = []
