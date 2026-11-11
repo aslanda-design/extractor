@@ -249,7 +249,10 @@ parsing:                     # S03 thresholds - tune these against your scans
   use_cache: true
 
 execution:                                      # how a run is carried out (never what it decides)
-  max_concurrency: 1            # tasks of one dependency layer side by side, capped by the model's own max_parallel
+  max_concurrency: 1            # default width of every fan_out level (how much work is in flight); 1 = in order, no threads
+  # fan_out: {tasks: 4, batches: 8, evidence_parts: 4, record_windows: 4, records: 8, retrieval: 1}   # per level; omitted = max_concurrency
+  # resources: {llm_api: 8, rerank_gpu: 1}                      # calls each backend serves at once (capped by the model's own max_parallel)
+  # assign: {extraction: llm_api, reranking: rerank_gpu}        # which resource each model uses (default: one per model)
   max_recovery_attempts: 2      # S12: recovery tries per task (0 = none)
   cache_model_calls: true       # a finished model call is not made again (resume after a crash)
 recovery:                                       # S12: bounded second tries for tasks that were not accepted
@@ -407,8 +410,15 @@ settings; they cannot appear in the task YAML.
 call cache when the same model was already asked the same prompt, counts calls, tokens and seconds per stage and task, and
 retries a failed call *with a change that depends on why it failed* (a transport error waits and re-sends; bad JSON asks for
 JSON only; a cut-off answer asks for a shorter one; a prompt that does not fit is not retried). Tasks run one dependency layer
-at a time; the tasks of a layer run side by side up to `execution.max_concurrency`, never more than the model's own
-`max_parallel`. A task whose `depends_on` was not accepted is not sent to the model.
+at a time. A task whose `depends_on` was not accepted is not sent to the model.
+
+**Parallelism** is two separate settings, so a laptop and a production deployment differ only in config:
+`execution.fan_out` says how much *work* is in flight per level (tasks, retrieval, plan batches, evidence parts, discovery
+windows, records; `max_concurrency` is the default of every level), and `execution.resources` / `assign` say how many *calls*
+each backend serves at once. Every call to a model holds one slot of its resource, so on a laptop the embedder, reranker and
+LLM share `gpu: 1` and take turns, while in production the LLM can sit on `llm_api: 8` and the reranker stay on `rerank_gpu: 1`.
+A resource is capped by the model's own `max_parallel`. Width 1 runs a plain loop (no threads). Results do not depend on any of
+this, and neither does the run id. `execution/concurrency.py` is standard-library only and can be copied into another project.
 
 **Recovery.** Open `src/extractor/recovery/recovery_pipeline.py`. A task that was not accepted gets at most
 `execution.max_recovery_attempts` targeted tries, within `recovery.max_calls` and `recovery.max_seconds`:

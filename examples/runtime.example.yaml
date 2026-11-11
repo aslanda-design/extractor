@@ -144,9 +144,25 @@ privacy:
 
 # --- how a run is carried out (never what it decides) ------------------------------------------
 execution:
-  max_concurrency: 1                 # tasks of one dependency layer side by side; capped by the model's own max_parallel
-                                     # (ollama_chat: 1, openai_compatible_chat: 4; set `max_parallel` in the model params)
-  max_recovery_attempts: 2           # S12: recovery tries per task (0 = no recovery)
+  # Parallelism answers two separate questions.
+  #   fan_out    HOW MUCH WORK is in flight: tasks, plan batches, evidence parts, discovery windows, records, retrieval.
+  #   resources  HOW MANY CALLS each backend serves at once. A call to a model holds one slot of its resource, so
+  #              models on one resource take turns (a local GPU), and a model on its own resource runs as wide as it allows.
+  # Wide fan_out on a narrow resource only queues: it never overloads a backend. Parallelism never changes an answer.
+  max_concurrency: 1                 # default width of every fan_out level; 1 = everything in order, no threads
+  # fan_out:                         # width per level; a level left out uses max_concurrency
+  #   tasks: 4                       #   tasks of one dependency layer
+  #   retrieval: 1                   #   S06: tasks gathering their evidence
+  #   batches: 8                     #   S07: batches of the plan
+  #   evidence_parts: 4              #   S07: the calls one task's evidence is split into
+  #   record_windows: 4              #   S09: discovery windows of a document
+  #   records: 8                     #   S09: records whose fields are read side by side
+  resources: {}                      # calls each backend serves at once. Empty = one resource per model, as wide as the model's own max_parallel
+  # LOCAL (one GPU shared by embedder, reranker and LLM):      PRODUCTION (hosted LLM, local reranker kept sequential):
+  # resources: {gpu: 1}                                        # resources: {llm_api: 8, rerank_gpu: 1}
+  # assign: {embedding: gpu, reranking: gpu, extraction: gpu}  # assign: {extraction: llm_api, interpretation: llm_api, reranking: rerank_gpu}
+  # A resource is capped by the model's own max_parallel (ollama_chat: 1, openai_compatible_chat: 4; set `max_parallel` in the model params).
+  max_recovery_attempts: 2          # S12: recovery tries per task (0 = no recovery)
   # max_seconds_per_task: 300        # S12: no new recovery attempt once a task used this much model time
   cache_model_calls: true            # a call that already gave a usable answer is not made again (resume, cheap re-measurement)
   retry_pause_seconds: 2             # pause before re-sending a call that failed in transport

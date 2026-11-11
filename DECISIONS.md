@@ -91,13 +91,22 @@ whole prompt. Failed calls are never stored.
 prompt should re-pay only that prompt. Cost: a cached run cannot show run-to-run variation, so variation is measured with the
 cache off (`eval --repeat N`).
 
-## 11. Threads and a per-adapter limit, not an asyncio rewrite
+## 11. Threads, with width of the work kept apart from capacity of the backend
 
-**Decision.** Independent tasks run in a bounded thread pool. The limit is the smaller of a setting and what the model
-adapter says its backend can serve.
+**Decision.** Independent work runs in bounded thread pools. Two settings are kept apart: `execution.fan_out` (how much
+work of each kind is in flight: tasks, retrieval, batches, evidence parts, discovery windows, records) and
+`execution.resources` (how many calls each named backend serves at once). Every model is assigned to a resource; a call holds
+one slot of it. A resource's capacity is the smaller of the setting and what the adapters on it say they can serve
+(`max_parallel`). A slot is held only around ONE backend call, never around a fan-out, so nested fan-outs cannot deadlock.
+With width 1 nothing is threaded. Neither setting is part of the run id: parallelism never changes an answer.
 
 **Why.** The work is waiting on HTTP calls, where threads and asyncio give the same speed-up; asyncio would have changed
-every adapter and pipeline signature. One local GPU serves one call at a time, a hosted API many: only the adapter knows.
+every adapter and pipeline signature. One local GPU serves one call at a time and is shared by the embedder, reranker and LLM;
+in production the LLM is a hosted API that serves many while a local reranker stays sequential. One knob could not say both,
+and a wide fan-out on a narrow resource only queues. The core (`execution/concurrency.py`) is standard-library only, so another
+project can copy it.
+
+**Not done.** Embedding batches during indexing are not fanned out (indexing runs before a run's resources exist).
 
 ## 12. YAML says what; runtime configuration says how
 

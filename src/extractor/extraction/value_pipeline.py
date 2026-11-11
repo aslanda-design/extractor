@@ -37,6 +37,7 @@ from ..contracts.passage import IndexedDocument, Passage
 from ..contracts.task import Cardinality, OutputType, TaskSpecification
 from ..contracts.common import TaskKind
 from ..events import emit
+from ..execution import fan_out, width
 from .calling import call_model
 from .capacity import evidence_budget, passage_cost
 from .choosing import choose_between
@@ -123,9 +124,12 @@ def ask_task(
 
     # 3. Ask the model, once per part.
     part_tags = [{tag: p for tag, p in tagged.items() if p in part} for part in parts]
-    for number, tags in enumerate(part_tags, start=1):
+    def extract_part(item: tuple[int, dict]) -> ModelCall:  # the parts do not depend on each other: `execution.fan_out.evidence_parts` runs them side by side
+        number, tags = item
         prompt = extraction_prompt(task, tags, settings.max_candidates, show_document)
-        asked.calls.append(call_model(extractor, prompt, f"extract {number}/{len(parts)}", settings.retries, settings.think_extraction))
+        return call_model(extractor, prompt, f"extract {number}/{len(parts)}", settings.retries, settings.think_extraction)
+
+    asked.calls.extend(fan_out(list(enumerate(part_tags, start=1)), extract_part, width("evidence_parts")))
 
     # 4. Read the answers: candidates with their quotes located in the evidence.
     for number, (part, call) in enumerate(zip(parts, asked.calls), start=1):

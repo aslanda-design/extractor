@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass
 
 from ..config.runtime import RetrievalSettings
+from ..execution.scheduler import call_slot
 from .queries import Queries, keywords
 from .types import Corpus, RetrievalRequest, RetrievalTools
 
@@ -48,7 +49,8 @@ def vector_candidates(queries: Queries, corpus: Corpus, tools: RetrievalTools, s
     lists = []
     allowed = list(corpus.passages) if len(corpus.passages) != sum(len(d.passages) for d in corpus.docs.values()) else None
     for v, query in enumerate(queries.semantic):
-        vector = tools.embedder.embed_query(query)
+        with call_slot(tools.embedder):
+            vector = tools.embedder.embed_query(query)
         for doc_id, doc in corpus.docs.items():
             hits = tools.vectors.query(doc.index_key, vector, settings.candidates_per_list, allowed_ids=allowed)
             ids = [h.id for h in hits if h.id in corpus.passages]

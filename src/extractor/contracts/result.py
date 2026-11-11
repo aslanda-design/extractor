@@ -67,7 +67,8 @@ class RunSummary(StrictModel):
     tasks: dict[str, StageCost] = {}  # task id -> model usage
     recovery_attempts: int = 0
     recovered: int = 0  # tasks whose result a recovery attempt improved
-    concurrency: int = 1
+    concurrency: int = 1  # the widest fan-out of the run (kept for runs saved before `parallelism` existed)
+    parallelism: dict = {}  # {"fan_out": {level: width}, "resources": {name: {capacity, peak, calls, wait_seconds, models}}}
 
 
 class TaskResult(StrictModel):

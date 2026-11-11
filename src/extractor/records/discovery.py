@@ -15,6 +15,7 @@ from ..config.runtime import RecordSettings
 from ..contracts.candidate import ModelCall
 from ..contracts.task import TaskSpecification
 from ..events import emit
+from ..execution import fan_out, width
 from ..extraction.calling import call_model
 from .keys import keep_family_chain
 from .outline import Tagged, include_marker, locate_start, tag_index
@@ -54,8 +55,22 @@ def discover(
     windows = split_windows(task, in_scope, model, settings)
     result.windows = len(windows)
     emit("S09", f"{task.id}: {len(in_scope)} block(s) in scope, read in {len(windows)} window(s)")
-    for n, window in enumerate(windows, start=1):
-        ask_window(task, window, f"{n}/{len(windows)}", tagged, model, settings, result, n, answer_cap(model, settings))
+    cap = answer_cap(model, settings)
+
+    def read_one(item: tuple[int, list[Tagged]]) -> Discovery:
+        n, window = item
+        part = Discovery()  # each window fills its own record: the windows may run side by side (`execution.fan_out.record_windows`)
+        ask_window(task, window, f"{n}/{len(windows)}", tagged, model, settings, part, n, cap)  # pagination and halving inside stay in order
+        return part
+
+    for part in fan_out(list(enumerate(windows, start=1)), read_one, width("record_windows")):  # merged in window order: the same result as a loop
+        result.found += part.found
+        result.calls += part.calls
+        result.windows += part.windows
+        result.failed_windows += part.failed_windows
+        result.truncated = result.truncated or part.truncated
+        result.notes += part.notes
+        result.wandered += part.wandered
     return result
 
 

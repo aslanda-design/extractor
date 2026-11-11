@@ -40,7 +40,7 @@ from ..adapters import AdapterSet, build_adapters
 from ..artifacts.fingerprint import fingerprint
 from ..artifacts import ArtifactStore
 from ..config import RuntimeConfig
-from ..config.runtime import RetrievalSettings
+from ..config.runtime import FAN_OUT_LEVELS, RetrievalSettings
 from ..contracts import CompiledSpecification, DocumentManifest, TaskResult, TaskStatus
 from ..contracts.common import Completeness, EvidenceRole, SourceRef, TaskKind
 from ..contracts.coverage import CoverageLedger
@@ -52,7 +52,7 @@ from ..contracts.result import EvidenceLink, ExecutionMetadata, RecoveryAttempt,
 from ..contracts.validation import AcceptanceDecision, Category, ValidationLayer, ValidationReport
 from ..contracts.task import TaskSpecification
 from ..events import emit, progress, trace
-from ..execution import Execution, execution_scope, parallel_limit, run_parallel, task_scope
+from ..execution import Execution, announce, call_slot, current_resources, execution_scope, fan_out, parallelism_scope, report as parallelism_report, task_scope
 from ..extraction import Asked, ask_batch, ask_task, conclude_task
 from ..interpretation.interpretation_pipeline import interpret_task
 from ..records.discovery import discover
@@ -162,7 +162,8 @@ def plan_only(
 ) -> RunContext:
     """S06 + S05 only (no chat model): the evidence of every task and the plan made from it. For the UI and the CLI."""
     ctx = _context(spec, manifest, adapters, config, indexed, store, profile)
-    retrieve_all(spec, ctx)
+    with parallelism_scope(config.execution, adapters):
+        retrieve_all(spec, ctx)
     return ctx
 
 
@@ -211,15 +212,17 @@ def run_pipeline_report(
     emit("S13", f"run {run_id_of(ctx.execution, ctx.profile)} started: {len(spec.tasks)} task(s), {len(manifest.documents)} document(s)")
 
     # One execution scope for the whole run: the model-call cache (resume) and the meter (what the run cost).
-    with execution_scope(store, config.execution) as exe:
+    # Parallelism is a second scope beside it: the resources (calls each backend serves at once) every model call takes a slot from.
+    with execution_scope(store, config.execution) as exe, parallelism_scope(config.execution, adapters) as plan:
         ctx.exe = exe
+        announce(config.execution, plan)
+        widths = {level: config.execution.width(level) for level in FAN_OUT_LEVELS}
 
         # S06 for every task first (no model involved), then S05 looks at all the evidence at once.
         with _timed(ctx, "retrieve"):
             retrieve_all(spec, ctx)
-        limit = parallel_limit(config.execution, *adapters.chat_models())
         with _timed(ctx, "extract"):
-            ask_all(spec, ctx, limit)
+            ask_all(spec, ctx)
 
         # Then the tasks, one dependency layer at a time; the tasks of a layer do not depend on each other.
         results: dict[str, TaskResult] = {}
@@ -238,17 +241,20 @@ def run_pipeline_report(
             return result
 
         with _timed(ctx, "tasks"):
-            if limit > 1:
-                emit("run", f"up to {limit} task(s) of a dependency layer run side by side")
+            if widths["tasks"] > 1:
+                emit("run", f"up to {widths['tasks']} task(s) of a dependency layer run side by side")
             for layer in spec.graph.layers:
-                results.update(zip(layer, run_parallel(layer, one, limit)))
+                results.update(zip(layer, fan_out(layer, one, widths["tasks"])))
+        resources = parallelism_report(current_resources(), plan)
+        for name, s in resources.items():
+            emit("S05", f"resource {name}: peak {s['peak']} of {s['capacity']} in flight, {s['calls']} call(s), {s['wait_seconds']}s waiting for a slot")
 
     if evidence_out is not None:
         evidence_out.update(ctx.evidence)
     if proposals_out is not None:
         proposals_out.update(ctx.proposals)
     ordered = [results[t.id] for t in spec.tasks]
-    summary = summarize(ordered, ctx, time.time() - started, limit)
+    summary = summarize(ordered, ctx, time.time() - started, widths, resources)
     emit("run", f"run summary: {summary.total.calls} model call(s) ({summary.total.cached} from the cache, {summary.total.failed} failed), "
                 f"{summary.total.prompt_tokens + summary.total.completion_tokens} token(s), {summary.total.seconds:.1f}s of model time; "
                 f"{summary.recovery_attempts} recovery attempt(s), {summary.recovered} task(s) improved", "ok")
@@ -277,7 +283,7 @@ def run_id_for(spec: CompiledSpecification, manifest: DocumentManifest, config: 
                        STAGE_VERSIONS, profile or config.retrieval.profile)[:16]
 
 
-def summarize(results: list[TaskResult], ctx: RunContext, seconds: float, limit: int) -> RunSummary:
+def summarize(results: list[TaskResult], ctx: RunContext, seconds: float, widths: dict[str, int], resources: dict) -> RunSummary:
     """What the run produced and what it cost (from the run meter; no result depends on it)."""
     statuses: dict[str, int] = {}
     for r in results:
@@ -286,7 +292,8 @@ def summarize(results: list[TaskResult], ctx: RunContext, seconds: float, limit:
     return RunSummary(
         seconds=round(seconds, 2), phase_seconds=ctx.phase_seconds, statuses=statuses, total=meter.total(), stages=meter.stages(),
         tasks=meter.tasks(), recovery_attempts=sum(a.action != "none" for r in results for a in r.recovery),
-        recovered=sum(any(a.kept for a in r.recovery) for r in results), concurrency=limit)
+        recovered=sum(any(a.kept for a in r.recovery) for r in results), concurrency=max(widths.values()),
+        parallelism={"fan_out": widths, "resources": resources})
 
 
 class _timed:
@@ -307,11 +314,20 @@ def retrieve_all(spec: CompiledSpecification, ctx: RunContext) -> None:
     if ctx.tools is None or ctx.indexed is None:
         return  # no index: the retrieval stage is skipped
     retrievable = [t for t in spec.graph.order if spec.task(t).kind != TaskKind.RECORDS]  # records: whole scope, S09
-    for n, task_id in enumerate(retrievable, start=1):
+    done, lock = [0], threading.Lock()
+
+    def gather(task_id: str) -> EvidencePackage:
         trace(task_id, "retrieve", "start")
-        ctx.evidence[task_id] = retrieve_task(spec.task(task_id), ctx, ctx.profile)
-        trace(task_id, "retrieve", "done", passages=len(ctx.evidence[task_id].passages))
-        progress("S06", n, len(retrievable), "tasks have their evidence")
+        package = retrieve_task(spec.task(task_id), ctx, ctx.profile)
+        trace(task_id, "retrieve", "done", passages=len(package.passages))
+        with lock:
+            done[0] += 1
+            progress("S06", done[0], len(retrievable), "tasks have their evidence")
+        return package
+
+    # the reranker and the embedder keep their own resource (`execution.assign`), so widening this never overloads them
+    for task_id, package in zip(retrievable, fan_out(retrievable, gather, ctx.config.execution.width("retrieval"))):
+        ctx.evidence[task_id] = package
     values = {t: ctx.evidence[t] for t in retrievable if spec.task(t).kind == TaskKind.VALUE}
     if values:
         ctx.plan = plan_extraction(values, {t: spec.task(t) for t in values}, ctx.config.planning,
@@ -329,7 +345,7 @@ def retrieve_task(task: TaskSpecification, ctx: RunContext, profile: str, budget
                            manifest=ctx.manifest, ledger=ctx.ledger, profile=profile)
 
 
-def ask_all(spec: CompiledSpecification, ctx: RunContext, limit: int = 1) -> None:
+def ask_all(spec: CompiledSpecification, ctx: RunContext) -> None:
     """S07 steps 1-4: one model call per batch of the plan (a batch is one task, or several that share evidence).
 
     A task that waits for another task (`depends_on`) is not asked here: whether it is asked at all depends on that task's result."""
@@ -354,7 +370,7 @@ def ask_all(spec: CompiledSpecification, ctx: RunContext, limit: int = 1) -> Non
             progress("S07", done[0], len(batches), "extraction calls done")
         return asked
 
-    for asked in run_parallel(batches, ask, min(limit, ctx.adapters.extractor.max_parallel)):
+    for asked in fan_out(batches, ask, ctx.config.execution.width("batches")):
         ctx.asked.update(asked)
 
 
@@ -466,10 +482,21 @@ def attempt_task(
         if ctx.config.acceptance.require_qualification and not escalate else None
     validated = validate_and_accept(
         task, proposal, package, scope_docs, ctx.config.acceptance,
-        scorer=(lambda q, texts: ctx.tools.reranker.score(q, texts)) if ctx.tools else None, query=query,
+        scorer=_scorer(ctx), query=query,
         verifier=ctx.adapters.verifier, accepted_tasks=ctx.accepted, qualified=qualified,
         retries=extraction.retries, ledger=ctx.ledger)
     return Attempt(proposal=proposal, validated=validated, package=package, profile=profile)
+
+
+def _scorer(ctx: RunContext):
+    """The reranker as a scoring function for validation, taking a slot of its resource around each call."""
+    if not ctx.tools:
+        return None
+
+    def score(query: str, texts: list[str]):
+        with call_slot(ctx.tools.reranker):
+            return ctx.tools.reranker.score(query, texts)
+    return score
 
 
 def _may_recover(ctx: RunContext) -> bool:
@@ -506,7 +533,7 @@ def _with_other_attempts(alternatives: list, value, trail: list[RecoveryAttempt]
 def _process_records(task: TaskSpecification, ctx: RunContext, document_ids: list[str], notes: list[str]) -> TaskResult:
     """S09 + S10/S11 + S12 for one records task."""
     docs = [ctx.indexed[d] for d in document_ids if d in ctx.indexed]
-    scorer = (lambda q, texts: ctx.tools.reranker.score(q, texts)) if ctx.tools else None
+    scorer = _scorer(ctx)
 
     def decide(outcome) -> RecordsAttempt:
         trace(task.id, "validate", "start", kind="records")

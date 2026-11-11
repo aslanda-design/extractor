@@ -29,10 +29,50 @@ class ModelsConfig(StrictModel):
     escalation: AdapterSelection = AdapterSelection()  # a stronger chat model that ONLY recovery (S12) may ask; `fake` = no escalation
 
 
+CAPABILITIES = ("parsing", "embedding", "reranking", "extraction", "interpretation", "verification", "escalation")
+FAN_OUT_LEVELS = ("tasks", "retrieval", "batches", "evidence_parts", "record_windows", "records")
+
+
+class FanOut(StrictModel):
+    """How many pieces of work of each kind may be in flight at once (None = `execution.max_concurrency`; 1 = in order, no threads).
+
+    This is the SHAPE of the work. How many calls a backend really serves at once is `execution.resources`."""
+
+    tasks: int | None = Field(default=None, ge=1)  # tasks of one dependency layer
+    retrieval: int | None = Field(default=None, ge=1)  # S06: tasks gathering their evidence
+    batches: int | None = Field(default=None, ge=1)  # S07: batches of the plan
+    evidence_parts: int | None = Field(default=None, ge=1)  # S07: the calls one task's evidence was split into
+    record_windows: int | None = Field(default=None, ge=1)  # S09: discovery windows of a document
+    records: int | None = Field(default=None, ge=1)  # S09: records whose fields are extracted side by side
+
+
 class ExecutionConfig(StrictModel):
     """How a run is carried out (never what it decides)."""
 
-    max_concurrency: int = Field(default=1, ge=1)  # tasks of one dependency layer run side by side, capped by the model's own `max_parallel`
+    max_concurrency: int = Field(default=1, ge=1)  # default width of every `fan_out` level; 1 = everything in order
+    fan_out: FanOut = FanOut()  # width per level of the work (tasks, batches, windows...)
+    resources: dict[str, int] = {}  # named backends -> calls each serves at once (`gpu: 1`, `llm_api: 8`); undeclared = capped only by the adapter
+    assign: dict[str, str] = {}  # capability -> resource name; default: a resource named after the capability
+
+    @model_validator(mode="after")
+    def _validate_parallelism(self):
+        for capability, name in self.assign.items():
+            if capability not in CAPABILITIES:
+                raise ValueError(f"execution.assign: unknown model '{capability}' (use one of {', '.join(CAPABILITIES)})")
+            if name not in self.resources:
+                raise ValueError(f"execution.assign.{capability}: resource '{name}' is not declared in execution.resources")
+        for name, n in self.resources.items():
+            if n < 1:
+                raise ValueError(f"execution.resources.{name}: capacity must be at least 1")
+        return self
+
+    def width(self, level: str) -> int:
+        """Pieces of work of this kind in flight at once."""
+        return max(1, getattr(self.fan_out, level) or self.max_concurrency)
+
+    def resource_of(self, capability: str) -> str:
+        return self.assign.get(capability, capability)
+
     max_recovery_attempts: int = Field(default=2, ge=0)  # S12: recovery tries per task (0 = no recovery)
     max_seconds_per_task: float | None = None  # S12: no new recovery attempt starts once a task has used this much model time (None = only `recovery.max_seconds`)
     cache_model_calls: bool = True  # a call that already gave a usable answer is read from the artifact store, not made again (resume, cheap re-measurement)
@@ -327,7 +367,9 @@ class RuntimeConfig(StrictModel):
 
     def fingerprint(self) -> str:
         """Identity of the settings that can change results (storage path excluded)."""
-        return fingerprint(self.models, self.execution, self.parsing, self.indexing.chunking,
+        # how much runs side by side never changes an answer, so it is not part of the identity (the run id stays the same)
+        execution = self.execution.model_dump(exclude={"max_concurrency", "fan_out", "resources", "assign"})
+        return fingerprint(self.models, execution, self.parsing, self.indexing.chunking,
                            self.retrieval.resolve(), self.extraction, self.planning, self.extraction_profiles, self.acceptance,
                            self.interpretation, self.interpretation_profiles, self.records, self.recovery)
 

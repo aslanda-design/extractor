@@ -12,6 +12,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..config.runtime import RetrievalSettings
+from ..execution.scheduler import call_slot
 from .fusion import Fused
 from .types import Corpus, RetrievalTools
 
@@ -49,7 +50,8 @@ def score_passages(
     if not candidates:
         return []
     if settings.rerank:
-        raw = tools.reranker.score(request_text, [corpus.passages[f.passage_id].indexed_text() for f in candidates])
+        with call_slot(tools.reranker):
+            raw = tools.reranker.score(request_text, [corpus.passages[f.passage_id].indexed_text() for f in candidates])
         scores = to_unit_range(raw)
     else:  # keep the fused order
         top = max(f.score for f in candidates) or 1.0
@@ -62,5 +64,6 @@ def score_extra(request_text: str, passage_ids: list[str], corpus: Corpus, tools
     """Relevance of passages found during expansion (same reranker; fused order impossible, so 0 without one)."""
     if not passage_ids or not settings.rerank:
         return {pid: 0.0 for pid in passage_ids}
-    raw = tools.reranker.score(request_text, [corpus.passages[pid].indexed_text() for pid in passage_ids])
+    with call_slot(tools.reranker):
+        raw = tools.reranker.score(request_text, [corpus.passages[pid].indexed_text() for pid in passage_ids])
     return dict(zip(passage_ids, to_unit_range(raw)))

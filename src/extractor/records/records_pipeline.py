@@ -20,6 +20,7 @@ The model reports what is where. It never decides alone: a record exists because
 its fields are accepted by the same policy as any value, and "complete" is only said after the audit.
 """
 
+import threading
 from dataclasses import dataclass, field
 
 from ..adapters.registry import AdapterSet
@@ -32,6 +33,7 @@ from ..contracts.task import TaskSpecification
 from ..contracts.validation import Category, ValidationFinding, ValidationLayer
 from ..validation.findings import finding
 from ..events import emit, progress
+from ..execution import fan_out, width
 from ..validation.coverage_check import Scorer
 from .audit import audit
 from .discovery import Discovery, discover
@@ -154,17 +156,25 @@ def read_document(
                     + (f"; duplicate key: {', '.join(duplicates)}" if duplicates else ""))
 
     # 5. Fields of each record, from the record's own text.
+    # The records do not depend on each other, so `execution.fan_out.records` may read them side by side; results keep the order of the spans.
     known = {(r.span.record_id, r.span.text): r for r in previous or []}
-    for n, span in enumerate(spans, start=1):
+    done, lock = [0], threading.Lock()
+
+    def read_record(span: Span) -> tuple[FoundRecord, bool]:  # (the record, whether its fields were read now)
         same = known.get((span.record_id, span.text))
         if same is not None:  # read before, unchanged: its fields stand
-            read.records.append(FoundRecord(same.record, span, same.outcomes))
-            continue
+            return FoundRecord(same.record, span, same.outcomes), False
         passage = as_passage(span, document.document_id, tagged)
         outcomes = extract_fields(task, span.record_id, passage, as_evidence(passage), document, adapters, config, profile, scorer, ledger)
-        read.calls += [c for o in outcomes for c in o.calls]
-        read.records.append(FoundRecord(make_record(span, outcomes), span, outcomes))
-        progress("S09", n, len(spans), f"records of {task.id} have their fields")
+        with lock:
+            done[0] += 1
+            progress("S09", done[0], len(spans), f"records of {task.id} have their fields")
+        return FoundRecord(make_record(span, outcomes), span, outcomes), True
+
+    for found_record, fresh in fan_out(spans, read_record, width("records")):
+        if fresh:  # only records read now cost model calls
+            read.calls += [c for o in found_record.outcomes for c in o.calls]
+        read.records.append(found_record)
 
     # 7. Audit: was the whole scope accounted for?
     read.findings += audit(task.id, document, tagged, scope, discovery, spans, duplicates, settings.check_numbering)

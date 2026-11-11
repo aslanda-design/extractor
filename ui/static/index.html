@@ -507,10 +507,20 @@ function runSummary(s) {
   return `<div class="card" style="margin-top:12px"><h2>What the run cost</h2>
     <p>${s.seconds.toFixed(1)} s in all (${Object.entries(s.phase_seconds).map(([k, v]) => esc(k) + ' ' + v.toFixed(1) + ' s').join(' · ')}) ·
       <b>${s.total.calls}</b> model call(s), ${s.total.cached} read from the call cache, ${s.total.failed} failed ·
-      ${s.recovery_attempts} recovery attempt(s), <b>${s.recovered}</b> task(s) improved · up to ${s.concurrency} task(s) at once</p>
+      ${s.recovery_attempts} recovery attempt(s), <b>${s.recovered}</b> task(s) improved · up to ${s.concurrency} piece(s) of work at once</p>
+    ${parallelismTable(s.parallelism)}
     <details><summary>By stage and by task</summary><table><thead><tr><th>Stage / task</th><th>Model calls</th><th>From cache</th><th>Failed</th><th>Tokens</th><th>Model seconds</th></tr></thead><tbody>
       ${Object.entries(s.stages).map(([k, c]) => row(k + (STAGES[k] ? ' ' + STAGES[k] : ''), c)).join('')}
       ${Object.entries(s.tasks).map(([k, c]) => row(k, c)).join('')}</tbody></table></details></div>`;
+}
+// how much really ran side by side: the widths of the work and, per backend, its capacity, the most calls it had in flight and the wait for a slot
+function parallelismTable(p) {
+  if (!p || !p.resources || !Object.keys(p.resources).length) return '';
+  const widths = Object.entries(p.fan_out || {}).map(([k, v]) => `${esc(k)} ${v}`).join(' · ');
+  return `<details><summary>Parallelism</summary><p class="hint">Width of the work: ${widths}. A backend never serves more calls than its capacity, however wide the work is.</p>
+    <table><thead><tr><th>Resource</th><th>Used by</th><th>Capacity</th><th>Peak in flight</th><th>Calls</th><th>Waiting for a slot (s)</th></tr></thead><tbody>
+    ${Object.entries(p.resources).map(([k, s]) => `<tr><td>${esc(k)}</td><td>${esc((s.models || []).join(', '))}</td><td>${s.capacity}</td><td>${s.peak}</td><td>${s.calls}</td><td>${s.wait_seconds}</td></tr>`).join('')}
+    </tbody></table></details>`;
 }
 function recoveryTrail(x) {
   const v = a => a == null ? '' : typeof a === 'string' ? a : JSON.stringify(a);
@@ -642,7 +652,10 @@ function acceptanceForm(a, opts) {
 }
 const jsonText = o => JSON.stringify(o ?? {});
 const GEN_HELP = {
-  'execution.max_concurrency': 'tasks of one dependency layer that may run side by side; capped by the model\'s own max_parallel (a local GPU: 1)',
+  'execution.max_concurrency': 'default width of every fan_out level (how much work is in flight); 1 = everything in order. What a backend really serves at once is set in resources',
+  'execution.fan_out': 'width per level, e.g. {"tasks": 4, "batches": 8, "evidence_parts": 4, "record_windows": 4, "records": 8, "retrieval": 1}; levels left out use max_concurrency',
+  'execution.resources': 'calls each backend serves at once, e.g. {"gpu": 1} locally or {"llm_api": 8, "rerank_gpu": 1} in production; capped by the model\'s own max_parallel',
+  'execution.assign': 'which resource each model uses, e.g. {"extraction": "llm_api", "embedding": "gpu", "reranking": "gpu"}; models on one resource share its capacity; default: a resource named after the model',
   'execution.max_recovery_attempts': 'S12: recovery tries per task (0 = no recovery)',
   'execution.max_seconds_per_task': 'S12: no new recovery attempt once a task used this much model time (empty = only recovery.max_seconds)',
   'execution.cache_model_calls': 'a call that already gave a usable answer is read from the store, not made again (resume after a crash, cheap re-measurement)',
